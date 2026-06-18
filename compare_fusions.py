@@ -2,30 +2,37 @@
 """
 Comparaison des fusions detectees par les kmers avec les fusions de reference BEAT AML.
 
-On construit, pour chaque source, un ensemble de "cles de fusion" definies par :
-    (SampleID, left_gene, left_chr, right_gene, right_chr, fusion_index)
+Calcule vrais positifs (TP), faux positifs (FP), faux negatifs (FN), puis
+precision = TP/(TP+FP) et recall = TP/(TP+FN).
 
-Puis on calcule :
-    - Vrais positifs (TP)  : cles presentes dans BEAT AML ET dans kmer
-    - Faux positifs (FP)   : cles presentes uniquement dans kmer
-    - Faux negatifs (FN)   : cles presentes uniquement dans BEAT AML
-    - Precision = TP / (TP + FP)
-    - Recall    = TP / (TP + FN)
+Une fusion est identifiee par :
+    (SampleID, left_gene, left_chr, right_gene, right_chr, fusion_index)
 
 Particularites du fichier kmer :
     - colonne 1 : "left_gene_left_chr_pos_pos_right_gene_right_chr_pos_pos_idx|idx|idx"
-                  -> une ligne peut porter PLUSIEURS fusion_index (separes par '|'),
-                     chacun donne une cle distincte.
+                  -> une ligne porte la liste des fusion_index BEAT AML associes a
+                     cette signature (separes par '|').
     - colonne 2 : SampleID avec un suffixe 'R' (ex: BA2409R) qui correspond a
                   BA2409 dans BEAT AML -> on retire le 'R' final.
 
+Trois criteres de comparaison (--match) :
+    - row (DEFAUT) : l'unite comptee est la LIGNE kmer. Ses index cherchent leur
+                     paire (echantillon + fusion_index) dans BEAT AML. Des qu'UN
+                     index matche -> 1 vrai positif (on ignore les autres index de
+                     la ligne). Si AUCUN ne matche -> 1 seul faux positif.
+                     FN = enregistrements BEAT AML jamais retrouves.
+    - index        : chaque couple (echantillon, fusion_index) est compte
+                     individuellement (un index non matche = un FP).
+    - genepair     : match par (echantillon + paire de genes), fusion_index ignore.
+
 Usage :
     python compare_fusions.py BEAT_AML.csv kmer.tsv
-    python compare_fusions.py BEAT_AML.csv kmer.tsv --outdir resultats
+    python compare_fusions.py BEAT_AML.csv kmer.tsv --match index --outdir resultats
 """
 
 import argparse
 import csv
+import os
 import re
 import sys
 from collections import defaultdict
@@ -77,8 +84,8 @@ def make_key(sample_id, left_gene, left_chr, right_gene, right_chr,
              fusion_index, use_index=True):
     """Cle de fusion comparable entre les deux sources.
 
-    use_index=True  -> match strict (echantillon + index + paire de genes)
-    use_index=False -> match par paire de genes dans l'echantillon (index ignore)
+    use_index=True  -> cle = echantillon + paire de genes + fusion_index
+    use_index=False -> cle = echantillon + paire de genes (index ignore)
     """
     key = (
         norm(sample_id),
@@ -117,12 +124,13 @@ def load_beat_aml(path, use_index=True):
     return keys
 
 
-def load_kmer(path, use_index=True):
-    """Lit le fichier kmer (tsv) et renvoie un dict {cle: [lignes brutes]}.
+def parse_kmer_rows(path):
+    """Lit le fichier kmer (tsv) et renvoie la liste des lignes parsees.
 
-    Chaque ligne peut generer plusieurs cles (un fusion_index par index liste).
+    Chaque element est un dict : line, sample_id (normalise), sample_raw,
+    left_gene, left_chr, right_gene, right_chr, indices (liste de str), col1.
     """
-    keys = defaultdict(list)
+    rows = []
     skipped = []
     with open(path, newline="") as fh:
         reader = csv.reader(fh, delimiter="\t")
@@ -137,26 +145,78 @@ def load_kmer(path, use_index=True):
                 skipped.append((lineno, col1))
                 continue
 
-            sample_id = normalize_sample_id(sample_raw)
-            for idx in m.group("indices").split("|"):
-                idx = idx.strip()
-                if not idx:
-                    continue
-                key = make_key(
-                    sample_id,
-                    m.group("left_gene"), m.group("left_chr"),
-                    m.group("right_gene"), m.group("right_chr"),
-                    idx,
-                    use_index=use_index,
-                )
-                keys[key].append({"line": lineno, "col1": col1, "sample": sample_raw})
+            indices = [i.strip() for i in m.group("indices").split("|") if i.strip()]
+            rows.append({
+                "line": lineno,
+                "sample_id": normalize_sample_id(sample_raw),
+                "sample_raw": sample_raw,
+                "left_gene": m.group("left_gene"),
+                "left_chr": m.group("left_chr"),
+                "right_gene": m.group("right_gene"),
+                "right_chr": m.group("right_chr"),
+                "indices": indices,
+                "col1": col1,
+            })
 
     if skipped:
         sys.stderr.write(
             f"[kmer] {len(skipped)} ligne(s) non parsable(s) ignoree(s) "
             f"(ex. ligne {skipped[0][0]}: {skipped[0][1]!r})\n"
         )
-    return keys
+    return rows
+
+
+def row_candidate_keys(row, use_index=True):
+    """Cles candidates generees par une ligne kmer (une par fusion_index)."""
+    return [
+        make_key(row["sample_id"], row["left_gene"], row["left_chr"],
+                 row["right_gene"], row["right_chr"], idx, use_index=use_index)
+        for idx in (row["indices"] or [""])
+    ]
+
+
+def compare_row(beat_keys, kmer_rows):
+    """Mode 'row' : l'unite comptee est la ligne kmer.
+
+    - TP : ligne kmer dont AU MOINS un (echantillon + index) est dans BEAT AML.
+    - FP : ligne kmer dont AUCUN candidat n'est dans BEAT AML (comptee une fois).
+    - FN : enregistrements BEAT AML jamais retrouves par aucune ligne kmer.
+    """
+    matched_beat = set()
+    tp_rows, fp_rows = [], []
+    for row in kmer_rows:
+        hits = [c for c in row_candidate_keys(row, use_index=True) if c in beat_keys]
+        if hits:
+            tp_rows.append((row, hits))
+            matched_beat.update(hits)
+        else:
+            fp_rows.append(row)
+
+    fn_keys = beat_keys - matched_beat
+    return {
+        "tp": len(tp_rows),
+        "fp": len(fp_rows),
+        "fn": len(fn_keys),
+        "matched_beat": len(matched_beat),
+        "tp_rows": tp_rows,
+        "fp_rows": fp_rows,
+        "fn_keys": fn_keys,
+    }
+
+
+def compare_set(beat_keys, kmer_rows, use_index):
+    """Modes 'index' / 'genepair' : comparaison ensembliste des cles."""
+    kmer_keys = set()
+    for row in kmer_rows:
+        kmer_keys.update(row_candidate_keys(row, use_index=use_index))
+
+    tp = beat_keys & kmer_keys
+    fp = kmer_keys - beat_keys
+    fn = beat_keys - kmer_keys
+    return {
+        "tp": len(tp), "fp": len(fp), "fn": len(fn),
+        "tp_keys": tp, "fp_keys": fp, "fn_keys": fn,
+    }
 
 
 def write_keys(path, keys, use_index=True):
@@ -171,6 +231,25 @@ def write_keys(path, keys, use_index=True):
             writer.writerow(key)
 
 
+def write_rows(path, rows, with_hit=False):
+    """Ecrit des lignes kmer (mode 'row') dans un tsv."""
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh, delimiter="\t")
+        header = ["kmer_line", "SampleID", "left_gene", "left_chr",
+                  "right_gene", "right_chr", "indices"]
+        if with_hit:
+            header.append("index_matche")
+        writer.writerow(header)
+        for item in rows:
+            row, hits = item if with_hit else (item, None)
+            base = [row["line"], row["sample_id"], row["left_gene"],
+                    norm_chr(row["left_chr"]), row["right_gene"],
+                    norm_chr(row["right_chr"]), "|".join(row["indices"])]
+            if with_hit:
+                base.append("|".join(sorted({h[-1] for h in hits})))
+            writer.writerow(base)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -178,48 +257,63 @@ def main():
     parser.add_argument("kmer", help="fichier kmer (tsv)")
     parser.add_argument("--outdir", default=None,
                         help="repertoire ou ecrire les listes TP/FP/FN (optionnel)")
-    parser.add_argument("--match", choices=["index", "genepair"], default="index",
-                        help="critere de correspondance : 'index' (echantillon + "
-                             "fusion_index, defaut) ou 'genepair' (echantillon + "
-                             "paire de genes, index ignore)")
+    parser.add_argument("--match", choices=["row", "index", "genepair"],
+                        default="row",
+                        help="critere de comparaison (defaut: row). Voir l'aide en "
+                             "tete de fichier.")
     args = parser.parse_args()
 
-    use_index = (args.match == "index")
+    use_index = (args.match != "genepair")
     beat = load_beat_aml(args.beat_aml, use_index=use_index)
-    kmer = load_kmer(args.kmer, use_index=use_index)
-
     beat_keys = set(beat)
-    kmer_keys = set(kmer)
+    kmer_rows = parse_kmer_rows(args.kmer)
 
-    tp = beat_keys & kmer_keys      # dans les deux
-    fp = kmer_keys - beat_keys      # uniquement kmer
-    fn = beat_keys - kmer_keys      # uniquement BEAT AML
+    if args.match == "row":
+        res = compare_row(beat_keys, kmer_rows)
+        denom_recall_total = len(beat_keys)
+    else:
+        res = compare_set(beat_keys, kmer_rows, use_index=use_index)
+        denom_recall_total = len(beat_keys)
 
-    n_tp, n_fp, n_fn = len(tp), len(fp), len(fn)
+    n_tp, n_fp, n_fn = res["tp"], res["fp"], res["fn"]
     precision = n_tp / (n_tp + n_fp) if (n_tp + n_fp) else 0.0
-    recall = n_tp / (n_tp + n_fn) if (n_tp + n_fn) else 0.0
+    # recall base sur les enregistrements BEAT AML retrouves
+    found_beat = res.get("matched_beat", n_tp)
+    recall = found_beat / denom_recall_total if denom_recall_total else 0.0
     f1 = (2 * precision * recall / (precision + recall)
           if (precision + recall) else 0.0)
 
     print("=== Comparaison fusions kmer vs BEAT AML ===")
     print(f"Critere de match : {args.match}")
-    print(f"Cles BEAT AML : {len(beat_keys)}")
-    print(f"Cles kmer     : {len(kmer_keys)}")
+    print(f"Lignes kmer       : {len(kmer_rows)}")
+    print(f"Fusions BEAT AML  : {len(beat_keys)}")
     print()
     print(f"Vrais positifs (TP) : {n_tp}")
     print(f"Faux positifs  (FP) : {n_fp}")
     print(f"Faux negatifs  (FN) : {n_fn}")
+    if args.match == "row":
+        print(f"(enregistrements BEAT AML retrouves : {found_beat}/{denom_recall_total})")
     print()
     print(f"Precision = TP/(TP+FP) = {precision:.4f}")
     print(f"Recall    = TP/(TP+FN) = {recall:.4f}")
     print(f"F1-score               = {f1:.4f}")
 
     if args.outdir:
-        import os
         os.makedirs(args.outdir, exist_ok=True)
-        write_keys(os.path.join(args.outdir, "vrais_positifs.tsv"), tp, use_index)
-        write_keys(os.path.join(args.outdir, "faux_positifs.tsv"), fp, use_index)
-        write_keys(os.path.join(args.outdir, "faux_negatifs.tsv"), fn, use_index)
+        if args.match == "row":
+            write_rows(os.path.join(args.outdir, "vrais_positifs.tsv"),
+                       res["tp_rows"], with_hit=True)
+            write_rows(os.path.join(args.outdir, "faux_positifs.tsv"),
+                       res["fp_rows"], with_hit=False)
+            write_keys(os.path.join(args.outdir, "faux_negatifs.tsv"),
+                       res["fn_keys"], use_index=True)
+        else:
+            write_keys(os.path.join(args.outdir, "vrais_positifs.tsv"),
+                       res["tp_keys"], use_index)
+            write_keys(os.path.join(args.outdir, "faux_positifs.tsv"),
+                       res["fp_keys"], use_index)
+            write_keys(os.path.join(args.outdir, "faux_negatifs.tsv"),
+                       res["fn_keys"], use_index)
         print(f"\nListes ecrites dans : {args.outdir}/")
 
 
