@@ -49,8 +49,20 @@ KMER_COL1_RE = re.compile(
 
 
 def norm(value):
-    """Normalisation commune d'un champ (gene, chr, index) : trim + majuscules."""
+    """Normalisation commune d'un champ (gene, index) : trim + majuscules."""
     return str(value).strip().upper()
+
+
+def norm_chr(value):
+    """Normalisation d'un chromosome : trim, majuscules, sans prefixe 'chr'.
+
+    BEAT AML stocke le chromosome en nombre nu (ex: '6', '18'), tandis que le
+    fichier kmer le prefixe par 'chr' (ex: 'chr6'). On harmonise les deux.
+    """
+    chrom = str(value).strip().upper()
+    if chrom.startswith("CHR"):
+        chrom = chrom[3:]
+    return chrom
 
 
 def normalize_sample_id(sample_id):
@@ -61,19 +73,26 @@ def normalize_sample_id(sample_id):
     return norm(sid)
 
 
-def make_key(sample_id, left_gene, left_chr, right_gene, right_chr, fusion_index):
-    """Cle de fusion comparable entre les deux sources."""
-    return (
+def make_key(sample_id, left_gene, left_chr, right_gene, right_chr,
+             fusion_index, use_index=True):
+    """Cle de fusion comparable entre les deux sources.
+
+    use_index=True  -> match strict (echantillon + index + paire de genes)
+    use_index=False -> match par paire de genes dans l'echantillon (index ignore)
+    """
+    key = (
         norm(sample_id),
         norm(left_gene),
-        norm(left_chr),
+        norm_chr(left_chr),
         norm(right_gene),
-        norm(right_chr),
-        norm(fusion_index),
+        norm_chr(right_chr),
     )
+    if use_index:
+        key = key + (norm(fusion_index),)
+    return key
 
 
-def load_beat_aml(path):
+def load_beat_aml(path, use_index=True):
     """Lit BEAT_AML.csv et renvoie un dict {cle: [lignes brutes]}."""
     keys = defaultdict(list)
     with open(path, newline="") as fh:
@@ -92,12 +111,13 @@ def load_beat_aml(path):
                 row["left_gene"], row["left_chr"],
                 row["right_gene"], row["right_chr"],
                 row["fusion_index"],
+                use_index=use_index,
             )
             keys[key].append(row)
     return keys
 
 
-def load_kmer(path):
+def load_kmer(path, use_index=True):
     """Lit le fichier kmer (tsv) et renvoie un dict {cle: [lignes brutes]}.
 
     Chaque ligne peut generer plusieurs cles (un fusion_index par index liste).
@@ -127,6 +147,7 @@ def load_kmer(path):
                     m.group("left_gene"), m.group("left_chr"),
                     m.group("right_gene"), m.group("right_chr"),
                     idx,
+                    use_index=use_index,
                 )
                 keys[key].append({"line": lineno, "col1": col1, "sample": sample_raw})
 
@@ -138,10 +159,11 @@ def load_kmer(path):
     return keys
 
 
-def write_keys(path, keys):
+def write_keys(path, keys, use_index=True):
     """Ecrit un ensemble de cles dans un fichier tsv trie."""
-    header = ["SampleID", "left_gene", "left_chr",
-              "right_gene", "right_chr", "fusion_index"]
+    header = ["SampleID", "left_gene", "left_chr", "right_gene", "right_chr"]
+    if use_index:
+        header.append("fusion_index")
     with open(path, "w", newline="") as fh:
         writer = csv.writer(fh, delimiter="\t")
         writer.writerow(header)
@@ -156,10 +178,15 @@ def main():
     parser.add_argument("kmer", help="fichier kmer (tsv)")
     parser.add_argument("--outdir", default=None,
                         help="repertoire ou ecrire les listes TP/FP/FN (optionnel)")
+    parser.add_argument("--match", choices=["index", "genepair"], default="index",
+                        help="critere de correspondance : 'index' (echantillon + "
+                             "fusion_index, defaut) ou 'genepair' (echantillon + "
+                             "paire de genes, index ignore)")
     args = parser.parse_args()
 
-    beat = load_beat_aml(args.beat_aml)
-    kmer = load_kmer(args.kmer)
+    use_index = (args.match == "index")
+    beat = load_beat_aml(args.beat_aml, use_index=use_index)
+    kmer = load_kmer(args.kmer, use_index=use_index)
 
     beat_keys = set(beat)
     kmer_keys = set(kmer)
@@ -175,6 +202,7 @@ def main():
           if (precision + recall) else 0.0)
 
     print("=== Comparaison fusions kmer vs BEAT AML ===")
+    print(f"Critere de match : {args.match}")
     print(f"Cles BEAT AML : {len(beat_keys)}")
     print(f"Cles kmer     : {len(kmer_keys)}")
     print()
@@ -189,9 +217,9 @@ def main():
     if args.outdir:
         import os
         os.makedirs(args.outdir, exist_ok=True)
-        write_keys(os.path.join(args.outdir, "vrais_positifs.tsv"), tp)
-        write_keys(os.path.join(args.outdir, "faux_positifs.tsv"), fp)
-        write_keys(os.path.join(args.outdir, "faux_negatifs.tsv"), fn)
+        write_keys(os.path.join(args.outdir, "vrais_positifs.tsv"), tp, use_index)
+        write_keys(os.path.join(args.outdir, "faux_positifs.tsv"), fp, use_index)
+        write_keys(os.path.join(args.outdir, "faux_negatifs.tsv"), fn, use_index)
         print(f"\nListes ecrites dans : {args.outdir}/")
 
 
