@@ -1,194 +1,176 @@
 #!/usr/bin/env python3
 """
-Visualisations de la comparaison fusions kmer vs BEAT AML.
+Visualisations de la comparaison fusions kmer vs vizome (BEAT AML), construites
+DIRECTEMENT a partir des fichiers produits par compare_fusions.py :
+    <resultats>/vrais_positifs.tsv   (TP)
+    <resultats>/faux_positifs.tsv    (FP)
+    <resultats>/faux_negatifs.tsv    (FN)
+Les chiffres sont donc strictement coherents avec ces fichiers.
 
-Produit deux sorties :
-  1. Un tableau de confusion PAR FUSION (paire de genes) : TP, FP, FN, TN,
-     precision, recall. Ecrit en CSV (toutes les fusions) et en image PNG
-     (les --top fusions les plus actives).
-  2. Un diagramme de Venn : fusions detectees par kmer, fusions de BEAT AML,
-     et leur intersection.
+Produit (dans --outdir) :
+  1. confusion_par_fusion.csv / .pdf       : une ligne PAR FUSION (paire de genes)
+  2. confusion_par_echantillon.csv / .pdf  : une ligne PAR ECHANTILLON
+     -> TP, FP, FN, TN, precision, recall ; TOUTES les lignes, paginees.
+  3. venn_kmer_vizome.png : Venn (kmer = TP+FP, vizome = TP+FN, intersection = TP)
 
-Granularite : niveau (paire de genes x echantillon).
-  - TP : echantillons ou la fusion est dans BEAT AML ET detectee par kmer
-  - FP : echantillons ou kmer detecte la fusion mais absente de BEAT AML
-  - FN : echantillons ou la fusion est dans BEAT AML mais non detectee par kmer
-  - TN : echantillons ou la fusion n'est ni dans BEAT AML ni dans kmer
-         (TN = nombre total d'echantillons - TP - FP - FN)
+Definitions (granularite = ligne de fichier, comme compare_fusions.py) :
+  Par fusion      : TP/FP/FN = nb de lignes de la fusion dans chaque fichier ;
+                    TN = nb total d'echantillons - nb d'echantillons de la fusion.
+  Par echantillon : TP/FP/FN = nb de lignes de l'echantillon dans chaque fichier ;
+                    TN = nb total de fusions - nb de fusions de l'echantillon.
 
 Usage :
-    python visualize_fusions.py BEAT_AML.csv kmer.tsv --outdir figures
-    python visualize_fusions.py BEAT_AML.csv kmer.tsv --outdir figures --top 30
+    python visualize_fusions.py <dossier_resultats> --outdir figures
+    python visualize_fusions.py resultats --outdir figures --rows-per-page 40
 """
 
 import argparse
+import csv
 import os
 from collections import defaultdict
 
 import matplotlib
-matplotlib.use("Agg")  # backend sans affichage (sauvegarde fichier)
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import pandas as pd
+from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib_venn import venn2
 
-import compare_fusions as cf
+COMMON_COLS = ["SampleID", "left_gene", "left_chr", "right_gene", "right_chr"]
 
 
-def build_genepair_sets(beat_path, kmer_path):
-    """Construit, par paire de genes, les ensembles d'echantillons BEAT et kmer.
-
-    Renvoie :
-        beat_samples : dict {gene_pair_key: set(samples)}
-        kmer_samples : dict {gene_pair_key: set(samples)}
-        labels       : dict {gene_pair_key: "LEFT_RIGHT"}
-        all_samples  : set de tous les echantillons observes (BEAT U kmer)
-    """
-    beat_samples = defaultdict(set)
-    kmer_samples = defaultdict(set)
-    labels = {}
-    all_samples = set()
-
-    # BEAT AML : cle paire de genes = (lg, lc, rg, rc) ; sample en colonne SampleID
-    beat = cf.load_beat_aml(beat_path, use_index=False)
-    for key in beat:                       # key = (sample, lg, lc, rg, rc)
-        sample, lg, lc, rg, rc = key
-        gp = (lg, lc, rg, rc)
-        beat_samples[gp].add(sample)
-        labels.setdefault(gp, f"{lg}_{rg}")
-        all_samples.add(sample)
-
-    # kmer : une ligne = une detection d'une paire de genes dans un echantillon
-    for row in cf.parse_kmer_rows(kmer_path):
-        gp = (cf.norm(row["left_gene"]), cf.norm_chr(row["left_chr"]),
-              cf.norm(row["right_gene"]), cf.norm_chr(row["right_chr"]))
-        kmer_samples[gp].add(row["sample_id"])
-        labels.setdefault(gp, f"{cf.norm(row['left_gene'])}_{cf.norm(row['right_gene'])}")
-        all_samples.add(row["sample_id"])
-
-    return beat_samples, kmer_samples, labels, all_samples
+def read_tsv(path):
+    if not os.path.exists(path):
+        raise SystemExit(f"fichier introuvable : {path}")
+    with open(path, newline="") as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        miss = set(COMMON_COLS) - set(reader.fieldnames or [])
+        if miss:
+            raise SystemExit(f"[{path}] colonnes manquantes : {sorted(miss)}")
+        rows = []
+        for r in reader:
+            r["fusion"] = f'{r["left_gene"]}_{r["right_gene"]}'
+            rows.append(r)
+        return rows
 
 
-def confusion_per_fusion(beat_samples, kmer_samples, labels, all_samples):
-    """Tableau (DataFrame) de confusion par paire de genes."""
-    n_total = len(all_samples)
+def build_confusion(tp, fp, fn, group_col, other_col, universe):
+    """Tableau de confusion regroupe par 'group_col'. TN base sur 'universe'."""
+    def counts(rows):
+        d = defaultdict(int)
+        for r in rows:
+            d[r[group_col]] += 1
+        return d
+
+    ctp, cfp, cfn = counts(tp), counts(fp), counts(fn)
+
+    distinct_other = defaultdict(set)
+    for rows in (tp, fp, fn):
+        for r in rows:
+            distinct_other[r[group_col]].add(r[other_col])
+
+    keys = sorted(set(ctp) | set(cfp) | set(cfn))
     records = []
-    for gp in set(beat_samples) | set(kmer_samples):
-        b = beat_samples.get(gp, set())
-        k = kmer_samples.get(gp, set())
-        tp = len(b & k)
-        fp = len(k - b)
-        fn = len(b - k)
-        tn = n_total - (tp + fp + fn)
-        precision = tp / (tp + fp) if (tp + fp) else 0.0
-        recall = tp / (tp + fn) if (tp + fn) else 0.0
-        records.append({
-            "fusion": labels[gp],
-            "left_chr": gp[1], "right_chr": gp[3],
-            "TP": tp, "FP": fp, "FN": fn, "TN": tn,
-            "precision": round(precision, 4),
-            "recall": round(recall, 4),
-        })
-    df = pd.DataFrame.from_records(records)
-    # tri par activite (fusions les plus presentes en premier)
-    df["_activite"] = df["TP"] + df["FP"] + df["FN"]
-    df = df.sort_values(["_activite", "fusion"], ascending=[False, True])
-    df = df.drop(columns="_activite").reset_index(drop=True)
-    return df
+    for k in keys:
+        TP, FP, FN = ctp.get(k, 0), cfp.get(k, 0), cfn.get(k, 0)
+        TN = universe - len(distinct_other[k])
+        precision = TP / (TP + FP) if (TP + FP) else 0.0
+        recall = TP / (TP + FN) if (TP + FN) else 0.0
+        records.append([k, TP, FP, FN, TN, round(precision, 4), round(recall, 4)])
+    # tri par activite decroissante
+    records.sort(key=lambda x: (-(x[1] + x[2] + x[3]), x[0]))
+    header = [group_col, "TP", "FP", "FN", "TN", "precision", "recall"]
+    return header, records
 
 
-def plot_table(df, path, top):
-    """Rend les 'top' premieres fusions sous forme de tableau image."""
-    cols = ["fusion", "left_chr", "right_chr", "TP", "FP", "FN", "TN",
-            "precision", "recall"]
-    sub = df[cols].head(top)
-
-    fig_h = 1.0 + 0.32 * len(sub)
-    fig, ax = plt.subplots(figsize=(11, fig_h))
-    ax.axis("off")
-    ax.set_title(f"Confusion par fusion (top {len(sub)} sur {len(df)})",
-                 fontsize=13, pad=12)
-
-    table = ax.table(cellText=sub.values, colLabels=cols,
-                     cellLoc="center", loc="center")
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 1.3)
-
-    # en-tete en gras + couleur
-    for j in range(len(cols)):
-        cell = table[0, j]
-        cell.set_facecolor("#40466e")
-        cell.set_text_props(color="white", fontweight="bold")
-
-    fig.tight_layout()
-    fig.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+def write_csv(path, header, records):
+    with open(path, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(header)
+        w.writerows(records)
 
 
-def plot_venn(beat_path, kmer_path, path, use_index):
-    """Diagramme de Venn des fusions kmer vs BEAT AML."""
-    beat = set(cf.load_beat_aml(beat_path, use_index=use_index))
-    kmer = set()
-    for row in cf.parse_kmer_rows(kmer_path):
-        kmer.update(cf.row_candidate_keys(row, use_index=use_index))
+def write_table_pdf(path, header, records, titre, rows_per_page):
+    n = len(records)
+    n_pages = max(1, (n + rows_per_page - 1) // rows_per_page)
+    with PdfPages(path) as pdf:
+        for pg in range(n_pages):
+            i0, i1 = pg * rows_per_page, min((pg + 1) * rows_per_page, n)
+            sub = records[i0:i1]
+            fig, ax = plt.subplots(figsize=(8.27, 11.69))  # A4 portrait
+            ax.axis("off")
+            ax.set_title(f"{titre} - page {pg + 1}/{n_pages} "
+                         f"(lignes {i0 + 1}-{i1} sur {n})",
+                         fontsize=12, fontweight="bold")
+            table = ax.table(cellText=sub, colLabels=header,
+                             cellLoc="center", loc="upper center")
+            table.auto_set_font_size(False)
+            table.set_fontsize(8)
+            table.scale(1, 1.25)
+            for j in range(len(header)):
+                c = table[0, j]
+                c.set_facecolor("#40466e")
+                c.set_text_props(color="white", fontweight="bold")
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+    return n_pages
 
-    only_kmer = len(kmer - beat)
-    only_beat = len(beat - kmer)
-    common = len(kmer & beat)
 
+def plot_venn(path, n_tp, n_fp, n_fn):
     fig, ax = plt.subplots(figsize=(7, 6))
-    v = venn2(subsets=(only_kmer, only_beat, common),
-              set_labels=("Fusions kmer", "Fusions BEAT AML"), ax=ax)
+    v = venn2(subsets=(n_fp, n_fn, n_tp),
+              set_labels=("Fusions kmer", "Fusions vizome"), ax=ax)
     for region, color in (("10", "#66c2a5"), ("01", "#fc8d62"), ("11", "#8da0cb")):
         if v.get_patch_by_id(region):
             v.get_patch_by_id(region).set_color(color)
             v.get_patch_by_id(region).set_alpha(0.7)
-    niveau = "echantillon + fusion_index" if use_index else "echantillon + paire de genes"
-    ax.set_title(f"Fusions kmer vs BEAT AML\n(cle : {niveau})", fontsize=12)
+    ax.set_title("Fusions kmer vs vizome", fontsize=13, fontweight="bold")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    return only_kmer, common, only_beat
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("beat_aml", help="fichier BEAT_AML.csv")
-    parser.add_argument("kmer", help="fichier kmer (tsv)")
-    parser.add_argument("--outdir", default="figures",
-                        help="repertoire de sortie (defaut: figures)")
-    parser.add_argument("--top", type=int, default=25,
-                        help="nombre de fusions affichees dans l'image du tableau")
-    parser.add_argument("--venn-match", choices=["index", "genepair"],
-                        default="genepair",
-                        help="cle du diagramme de Venn (defaut: genepair)")
+    parser.add_argument("resultats", help="dossier contenant vrais/faux_positifs/negatifs.tsv")
+    parser.add_argument("--outdir", default="figures", help="repertoire de sortie")
+    parser.add_argument("--rows-per-page", type=int, default=40,
+                        help="lignes par page dans les PDF (defaut 40)")
     args = parser.parse_args()
-
     os.makedirs(args.outdir, exist_ok=True)
 
-    # 1. Tableau de confusion par fusion
-    beat_s, kmer_s, labels, all_samples = build_genepair_sets(args.beat_aml, args.kmer)
-    df = confusion_per_fusion(beat_s, kmer_s, labels, all_samples)
+    tp = read_tsv(os.path.join(args.resultats, "vrais_positifs.tsv"))
+    fp = read_tsv(os.path.join(args.resultats, "faux_positifs.tsv"))
+    fn = read_tsv(os.path.join(args.resultats, "faux_negatifs.tsv"))
+    n_tp, n_fp, n_fn = len(tp), len(fp), len(fn)
 
-    csv_path = os.path.join(args.outdir, "confusion_par_fusion.csv")
-    df.to_csv(csv_path, index=False)
+    n_samples = len({r["SampleID"] for rows in (tp, fp, fn) for r in rows})
+    n_fusions = len({r["fusion"] for rows in (tp, fp, fn) for r in rows})
 
-    table_png = os.path.join(args.outdir, "tableau_confusion.png")
-    plot_table(df, table_png, args.top)
+    # 1. par fusion
+    h, rec = build_confusion(tp, fp, fn, "fusion", "SampleID", n_samples)
+    write_csv(os.path.join(args.outdir, "confusion_par_fusion.csv"), h, rec)
+    npg_f = write_table_pdf(os.path.join(args.outdir, "tableau_confusion_par_fusion.pdf"),
+                            h, rec, "Confusion par fusion", args.rows_per_page)
 
-    # 2. Diagramme de Venn
-    venn_png = os.path.join(args.outdir, "venn_kmer_beataml.png")
-    only_kmer, common, only_beat = plot_venn(
-        args.beat_aml, args.kmer, venn_png, use_index=(args.venn_match == "index"))
+    # 2. par echantillon
+    h, rec = build_confusion(tp, fp, fn, "SampleID", "fusion", n_fusions)
+    write_csv(os.path.join(args.outdir, "confusion_par_echantillon.csv"), h, rec)
+    npg_s = write_table_pdf(os.path.join(args.outdir, "tableau_confusion_par_echantillon.pdf"),
+                            h, rec, "Confusion par echantillon", args.rows_per_page)
 
-    print(f"Echantillons consideres (BEAT U kmer) : {len(all_samples)}")
-    print(f"Fusions (paires de genes) distinctes  : {len(df)}")
-    print()
+    # 3. venn
+    venn_path = os.path.join(args.outdir, "venn_kmer_vizome.png")
+    plot_venn(venn_path, n_tp, n_fp, n_fn)
+
+    print(f"TP={n_tp}  FP={n_fp}  FN={n_fn}")
+    print(f"Precision = {n_tp/(n_tp+n_fp):.4f} | Recall = {n_tp/(n_tp+n_fn):.4f}")
+    print(f"Echantillons : {n_samples} | Fusions : {n_fusions}")
     print("Fichiers ecrits :")
-    print(f"  - {csv_path}        (tableau complet par fusion)")
-    print(f"  - {table_png}       (image top {args.top})")
-    print(f"  - {venn_png}        (Venn : kmer-only={only_kmer}, "
-          f"commun={common}, BEAT-only={only_beat})")
+    print(f"  - {args.outdir}/confusion_par_fusion.csv")
+    print(f"  - {args.outdir}/tableau_confusion_par_fusion.pdf ({npg_f} pages)")
+    print(f"  - {args.outdir}/confusion_par_echantillon.csv")
+    print(f"  - {args.outdir}/tableau_confusion_par_echantillon.pdf ({npg_s} pages)")
+    print(f"  - {venn_path}")
 
 
 if __name__ == "__main__":
