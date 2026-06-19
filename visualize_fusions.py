@@ -11,7 +11,8 @@ Produit (dans --outdir) :
   1. confusion_par_fusion.csv / .pdf       : une ligne PAR FUSION (paire de genes)
   2. confusion_par_echantillon.csv / .pdf  : une ligne PAR ECHANTILLON
      -> TP, FP, FN, TN, precision, recall ; TOUTES les lignes, paginees.
-  3. venn_kmer_vizome.png : Venn (kmer = TP+FP, vizome = TP+FN, intersection = TP)
+  3. confusion.xlsx : classeur Excel regroupant les deux tableaux (un onglet chacun)
+  4. venn_kmer_vizome.png : Venn (kmer = TP+FP, vizome = TP+FN, intersection = TP)
 
 Definitions (granularite = ligne de fichier, comme compare_fusions.py) :
   Par fusion      : TP/FP/FN = nb de lignes de la fusion dans chaque fichier ;
@@ -89,6 +90,33 @@ def write_csv(path, header, records):
         w.writerows(records)
 
 
+def write_xlsx(path, sheets):
+    """Ecrit un classeur Excel. 'sheets' = liste de (nom, header, records)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    head_fill = PatternFill("solid", fgColor="40466E")
+    head_font = Font(color="FFFFFF", bold=True)
+    for name, header, records in sheets:
+        ws = wb.create_sheet(title=name[:31])  # Excel limite a 31 caracteres
+        ws.append(header)
+        for cell in ws[1]:
+            cell.fill = head_fill
+            cell.font = head_font
+            cell.alignment = Alignment(horizontal="center")
+        for rec in records:
+            ws.append(rec)
+        ws.freeze_panes = "A2"  # fige la ligne d'entete
+        # largeur de colonnes approximative
+        for j, col in enumerate(header, start=1):
+            width = max(len(str(col)),
+                        *(len(str(r[j - 1])) for r in records)) + 2 if records else len(col) + 2
+            ws.column_dimensions[ws.cell(row=1, column=j).column_letter].width = min(width, 40)
+    wb.save(path)
+
+
 def write_table_pdf(path, header, records, titre, rows_per_page):
     n = len(records)
     n_pages = max(1, (n + rows_per_page - 1) // rows_per_page)
@@ -147,16 +175,21 @@ def main():
     n_fusions = len({r["fusion"] for rows in (tp, fp, fn) for r in rows})
 
     # 1. par fusion
-    h, rec = build_confusion(tp, fp, fn, "fusion", "SampleID", n_samples)
-    write_csv(os.path.join(args.outdir, "confusion_par_fusion.csv"), h, rec)
+    h_f, rec_f = build_confusion(tp, fp, fn, "fusion", "SampleID", n_samples)
+    write_csv(os.path.join(args.outdir, "confusion_par_fusion.csv"), h_f, rec_f)
     npg_f = write_table_pdf(os.path.join(args.outdir, "tableau_confusion_par_fusion.pdf"),
-                            h, rec, "Confusion par fusion", args.rows_per_page)
+                            h_f, rec_f, "Confusion par fusion", args.rows_per_page)
 
     # 2. par echantillon
-    h, rec = build_confusion(tp, fp, fn, "SampleID", "fusion", n_fusions)
-    write_csv(os.path.join(args.outdir, "confusion_par_echantillon.csv"), h, rec)
+    h_s, rec_s = build_confusion(tp, fp, fn, "SampleID", "fusion", n_fusions)
+    write_csv(os.path.join(args.outdir, "confusion_par_echantillon.csv"), h_s, rec_s)
     npg_s = write_table_pdf(os.path.join(args.outdir, "tableau_confusion_par_echantillon.pdf"),
-                            h, rec, "Confusion par echantillon", args.rows_per_page)
+                            h_s, rec_s, "Confusion par echantillon", args.rows_per_page)
+
+    # classeur Excel regroupant les deux tableaux (un onglet chacun)
+    xlsx_path = os.path.join(args.outdir, "confusion.xlsx")
+    write_xlsx(xlsx_path, [("par_fusion", h_f, rec_f),
+                           ("par_echantillon", h_s, rec_s)])
 
     # 3. venn
     venn_path = os.path.join(args.outdir, "venn_kmer_vizome.png")
@@ -167,8 +200,9 @@ def main():
     print(f"Echantillons : {n_samples} | Fusions : {n_fusions}")
     print("Fichiers ecrits :")
     print(f"  - {args.outdir}/confusion_par_fusion.csv")
-    print(f"  - {args.outdir}/tableau_confusion_par_fusion.pdf ({npg_f} pages)")
     print(f"  - {args.outdir}/confusion_par_echantillon.csv")
+    print(f"  - {xlsx_path}  (onglets : par_fusion, par_echantillon)")
+    print(f"  - {args.outdir}/tableau_confusion_par_fusion.pdf ({npg_f} pages)")
     print(f"  - {args.outdir}/tableau_confusion_par_echantillon.pdf ({npg_s} pages)")
     print(f"  - {venn_path}")
 

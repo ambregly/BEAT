@@ -11,7 +11,8 @@
 #   1. confusion_par_fusion.csv / .pdf       : une ligne PAR FUSION (paire de genes)
 #   2. confusion_par_echantillon.csv / .pdf  : une ligne PAR ECHANTILLON
 #      -> TP, FP, FN, TN, precision, recall ; TOUTES les lignes, paginees.
-#   3. venn_kmer_vizome.png : Venn (kmer = TP+FP, vizome = TP+FN, intersection = TP)
+#   3. confusion.xlsx : classeur Excel regroupant les deux tableaux (un onglet chacun)
+#   4. venn_kmer_vizome.png : Venn (kmer = TP+FP, vizome = TP+FN, intersection = TP)
 #
 # Definitions (granularite = ligne de fichier, comme compare_fusions.py) :
 #   Par fusion      : TP/FP/FN = nb de lignes de la fusion dans chaque fichier ;
@@ -25,13 +26,13 @@
 # ---------------------------------------------------------------------------
 
 ## ---- dependances (installees automatiquement si absentes) -----------------
-need <- c("VennDiagram", "gridExtra", "grid")
+need <- c("VennDiagram", "gridExtra", "grid", "openxlsx")
 for (p in need) {
   if (!requireNamespace(p, quietly = TRUE)) {
     install.packages(p, repos = "https://cloud.r-project.org")
   }
 }
-suppressMessages({ library(VennDiagram); library(gridExtra); library(grid) })
+suppressMessages({ library(VennDiagram); library(gridExtra); library(grid); library(openxlsx) })
 
 ## ---- arguments ------------------------------------------------------------
 args <- commandArgs(trailingOnly = TRUE)
@@ -127,6 +128,12 @@ write.csv(conf_smp, file.path(out_dir, "confusion_par_echantillon.csv"), row.nam
 npg_smp <- write_table_pdf(conf_smp, file.path(out_dir, "tableau_confusion_par_echantillon.pdf"),
                            "Confusion par echantillon")
 
+## ---- classeur Excel regroupant les deux tableaux --------------------------
+write.xlsx(list(par_fusion = conf_fus, par_echantillon = conf_smp),
+           file = file.path(out_dir, "confusion.xlsx"),
+           headerStyle = createStyle(fgFill = "#40466E", fontColour = "#FFFFFF",
+                                     textDecoration = "bold"))
+
 ## ---- 3. diagramme de Venn -------------------------------------------------
 venn_png <- file.path(out_dir, "venn_kmer_vizome.png")
 png(venn_png, width = 1400, height = 1200, res = 200)
@@ -147,7 +154,8 @@ cat(sprintf("Precision = %.4f | Recall = %.4f\n",
 cat(sprintf("Echantillons : %d | Fusions : %d\n", n_total_samples, n_total_fusions))
 cat("Fichiers ecrits :\n")
 cat(sprintf("  - %s/confusion_par_fusion.csv\n", out_dir))
-cat(sprintf("  - %s/tableau_confusion_par_fusion.pdf (%d pages)\n", out_dir, npg_fus))
 cat(sprintf("  - %s/confusion_par_echantillon.csv\n", out_dir))
+cat(sprintf("  - %s/confusion.xlsx (onglets : par_fusion, par_echantillon)\n", out_dir))
+cat(sprintf("  - %s/tableau_confusion_par_fusion.pdf (%d pages)\n", out_dir, npg_fus))
 cat(sprintf("  - %s/tableau_confusion_par_echantillon.pdf (%d pages)\n", out_dir, npg_smp))
 cat(sprintf("  - %s\n", venn_png))
