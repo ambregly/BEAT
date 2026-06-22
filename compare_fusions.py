@@ -261,12 +261,27 @@ def main():
                         default="row",
                         help="critere de comparaison (defaut: row). Voir l'aide en "
                              "tete de fichier.")
+    parser.add_argument("--common-samples", action="store_true",
+                        help="ne garder que les echantillons presents a la fois dans "
+                             "BEAT AML et dans le fichier kmer (supprime les cas "
+                             "purement FP/FN dus aux echantillons non partages).")
     args = parser.parse_args()
 
     use_index = (args.match != "genepair")
     beat = load_beat_aml(args.beat_aml, use_index=use_index)
     beat_keys = set(beat)
     kmer_rows = parse_kmer_rows(args.kmer)
+
+    if args.common_samples:
+        beat_samples = {k[0] for k in beat_keys}
+        kmer_samples = {r["sample_id"] for r in kmer_rows}
+        common = beat_samples & kmer_samples
+        beat_keys = {k for k in beat_keys if k[0] in common}
+        kmer_rows = [r for r in kmer_rows if r["sample_id"] in common]
+        sys.stderr.write(
+            f"[common-samples] echantillons gardes : {len(common)} "
+            f"(BEAT={len(beat_samples)}, kmer={len(kmer_samples)})\n"
+        )
 
     if args.match == "row":
         res = compare_row(beat_keys, kmer_rows)

@@ -1,0 +1,4 @@
+label	beat	kmer	match	common_samples	rows_per_page
+run2_all	BEAT_AML2.csv	kmer2.tsv	row	no	30
+run2_common	BEAT_AML2.csv	kmer2.tsv	row	yes	30
+run2_common_index	BEAT_AML2.csv	kmer2.tsv	index	yes	30
