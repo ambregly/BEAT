@@ -76,10 +76,12 @@ def build_confusion(tp, fp, fn, group_col, other_col, universe):
         TN = universe - len(distinct_other[k])
         precision = TP / (TP + FP) if (TP + FP) else 0.0
         recall = TP / (TP + FN) if (TP + FN) else 0.0
-        records.append([k, TP, FP, FN, TN, round(precision, 4), round(recall, 4)])
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        records.append([k, TP, FP, FN, TN, round(precision, 4), round(recall, 4),
+                        round(f1, 4)])
     # tri par activite decroissante
     records.sort(key=lambda x: (-(x[1] + x[2] + x[3]), x[0]))
-    header = [group_col, "TP", "FP", "FN", "TN", "precision", "recall"]
+    header = [group_col, "TP", "FP", "FN", "TN", "precision", "recall", "F1"]
     return header, records
 
 

@@ -85,9 +85,12 @@ build_confusion <- function(group_col, other_col, universe) {
   TN <- universe - as.integer(distinct_other[keys])
   precision <- ifelse((TP + FP) > 0, TP / (TP + FP), 0)
   recall    <- ifelse((TP + FN) > 0, TP / (TP + FN), 0)
+  f1        <- ifelse((precision + recall) > 0,
+                      2 * precision * recall / (precision + recall), 0)
 
   df <- data.frame(key = keys, TP = TP, FP = FP, FN = FN, TN = TN,
                    precision = round(precision, 4), recall = round(recall, 4),
+                   F1 = round(f1, 4),
                    stringsAsFactors = FALSE)
   names(df)[1] <- group_col
   df <- df[order(-(df$TP + df$FP + df$FN), df[[group_col]]), ]
