@@ -54,7 +54,8 @@ read_tsv <- function(name) {
   miss <- setdiff(need_cols, colnames(df))
   if (length(miss) > 0)
     stop(paste0("[", name, "] colonnes manquantes : ", paste(miss, collapse = ", ")))
-  df$fusion <- paste(df$left_gene, df$right_gene, sep = "_")
+  # noms de genes en majuscules pour fusionner les variantes de casse
+  df$fusion <- paste(toupper(df$left_gene), toupper(df$right_gene), sep = "_")
   df
 }
 

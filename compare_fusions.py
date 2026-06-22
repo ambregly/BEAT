@@ -249,8 +249,10 @@ def write_rows(path, rows, with_hit=False):
         writer.writerow(header)
         for item in rows:
             row, hits = item if with_hit else (item, None)
-            base = [row["line"], row["sample_id"], row["left_gene"],
-                    norm_chr(row["left_chr"]), row["right_gene"],
+            # noms de genes normalises (majuscules) pour rester coherent avec le
+            # fichier des FN et eviter les doublons de casse (ex: C15orf39/C15ORF39)
+            base = [row["line"], row["sample_id"], norm(row["left_gene"]),
+                    norm_chr(row["left_chr"]), norm(row["right_gene"]),
                     norm_chr(row["right_chr"]), "|".join(row["indices"])]
             if with_hit:
                 base.append("|".join(sorted({h[-1] for h in hits})))

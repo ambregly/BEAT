@@ -49,7 +49,8 @@ def read_tsv(path):
             raise SystemExit(f"[{path}] colonnes manquantes : {sorted(miss)}")
         rows = []
         for r in reader:
-            r["fusion"] = f'{r["left_gene"]}_{r["right_gene"]}'
+            # noms de genes en majuscules pour fusionner les variantes de casse
+            r["fusion"] = f'{r["left_gene"].upper()}_{r["right_gene"].upper()}'
             rows.append(r)
         return rows
 
