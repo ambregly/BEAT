@@ -139,17 +139,24 @@ def parse_kmer_rows(path):
                 continue
             col1 = fields[0].strip()
             sample_raw = fields[1].strip() if len(fields) > 1 else ""
+            count_raw = fields[2].strip() if len(fields) > 2 else ""
 
             m = KMER_COL1_RE.match(col1)
             if not m:
                 skipped.append((lineno, col1))
                 continue
 
+            try:
+                count = float(count_raw)
+            except ValueError:
+                count = None
+
             indices = [i.strip() for i in m.group("indices").split("|") if i.strip()]
             rows.append({
                 "line": lineno,
                 "sample_id": normalize_sample_id(sample_raw),
                 "sample_raw": sample_raw,
+                "count": count,            # 3e colonne kmer (comptage)
                 "left_gene": m.group("left_gene"),
                 "left_chr": m.group("left_chr"),
                 "right_gene": m.group("right_gene"),
