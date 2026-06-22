@@ -13,14 +13,13 @@ Deux modes :
 
 1) Un seul jeu (en ligne de commande) :
     python run_pipeline.py --beat BEAT_AML2.csv --kmer kmer2.tsv \
-        --label run_common --match row --common-samples --rows-per-page 30
+        --label run1 --match row --rows-per-page 30
 
 2) Plusieurs jeux via un manifeste TSV (--manifest). Colonnes attendues
    (entete obligatoire ; colonnes optionnelles si absentes -> valeurs par defaut) :
-       label  beat  kmer  match  common_samples  rows_per_page  vizome_count
+       label  beat  kmer  match  rows_per_page  vizome_count
    exemple de ligne :
-       run1   BEAT_AML2.csv  kmer2.tsv  row  yes  30  junction_read_count
-   (common_samples : yes/true/1 pour activer)
+       run1   BEAT_AML2.csv  kmer2.tsv  row  30  junction_read_count
 
     python run_pipeline.py --manifest jeux.tsv --outdir analyses
 """
@@ -42,23 +41,17 @@ def run(cmd):
     subprocess.run(cmd, check=True)
 
 
-def process(label, beat, kmer, outdir, match, common_samples, rows_per_page,
-            vizome_count):
+def process(label, beat, kmer, outdir, match, rows_per_page, vizome_count):
     base = os.path.join(outdir, label)
     res_dir = os.path.join(base, "resultats")
     fig_dir = os.path.join(base, "figures")
     os.makedirs(res_dir, exist_ok=True)
     os.makedirs(fig_dir, exist_ok=True)
 
-    print(f"\n=== [{label}] beat={beat} kmer={kmer} "
-          f"match={match} common_samples={common_samples} ===")
+    print(f"\n=== [{label}] beat={beat} kmer={kmer} match={match} ===")
 
     # 1. comparaison -> TP/FP/FN
-    cmp_cmd = [sys.executable, COMPARE, beat, kmer, "--outdir", res_dir,
-               "--match", match]
-    if common_samples:
-        cmp_cmd.append("--common-samples")
-    run(cmp_cmd)
+    run([sys.executable, COMPARE, beat, kmer, "--outdir", res_dir, "--match", match])
 
     # 2. tableaux + Venn (depuis le dossier resultats)
     run([sys.executable, VISUALIZE, res_dir, "--outdir", fig_dir,
@@ -66,20 +59,13 @@ def process(label, beat, kmer, outdir, match, common_samples, rows_per_page,
 
     # 3. graphes supplementaires (depuis les fichiers sources, besoin des index)
     if match in ("row", "index"):
-        extra_cmd = [sys.executable, EXTRA, beat, kmer, "--outdir", fig_dir,
-                     "--match", match, "--vizome-count", vizome_count]
-        if common_samples:
-            extra_cmd.append("--common-samples")
-        run(extra_cmd)
+        run([sys.executable, EXTRA, beat, kmer, "--outdir", fig_dir,
+             "--match", match, "--vizome-count", vizome_count])
     else:
         print("  (extra_plots ignore : --match genepair n'a pas d'index pour "
               "relier les comptages)")
 
     print(f"=== [{label}] termine -> {base}/ ===")
-
-
-def truthy(v):
-    return str(v).strip().lower() in ("yes", "true", "1", "oui", "y")
 
 
 def main():
@@ -90,8 +76,6 @@ def main():
     p.add_argument("--kmer", help="fichier kmer.tsv (mode jeu unique)")
     p.add_argument("--label", default="run", help="nom du jeu (mode jeu unique)")
     p.add_argument("--match", default="row", choices=["row", "index", "genepair"])
-    p.add_argument("--common-samples", action="store_true",
-                   help="restreindre aux echantillons communs BEAT/kmer")
     p.add_argument("--rows-per-page", type=int, default=40)
     p.add_argument("--vizome-count", default="junction_read_count",
                    choices=["junction_read_count", "spanning_frag_count",
@@ -114,7 +98,6 @@ def main():
                 kmer=j["kmer"].strip(),
                 outdir=args.outdir,
                 match=j.get("match", "row").strip() or "row",
-                common_samples=truthy(j.get("common_samples", "no")),
                 rows_per_page=int(j.get("rows_per_page") or args.rows_per_page),
                 vizome_count=(j.get("vizome_count") or args.vizome_count).strip(),
             )
@@ -123,8 +106,7 @@ def main():
             sys.exit("Mode jeu unique : --beat et --kmer sont requis "
                      "(ou utilisez --manifest).")
         process(args.label, args.beat, args.kmer, args.outdir,
-                args.match, args.common_samples, args.rows_per_page,
-                args.vizome_count)
+                args.match, args.rows_per_page, args.vizome_count)
 
     print(f"\nTout est ecrit sous : {args.outdir}/")
 

@@ -1,4 +1,3 @@
-label	beat	kmer	match	common_samples	rows_per_page	vizome_count
-run2_all	BEAT_AML2.csv	kmer2.tsv	row	no	30	junction_read_count
-run2_common	BEAT_AML2.csv	kmer2.tsv	row	yes	30	junction_read_count
-run2_common_index	BEAT_AML2.csv	kmer2.tsv	index	yes	30	junction_read_count
+label	beat	kmer	match	rows_per_page	vizome_count
+run2_row	BEAT_AML2.csv	kmer2.tsv	row	30	junction_read_count
+run2_index	BEAT_AML2.csv	kmer2.tsv	index	30	junction_read_count

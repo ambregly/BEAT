@@ -3,8 +3,10 @@
 Graphiques supplementaires sur la comparaison fusions kmer vs vizome (BEAT AML).
 
 A partir des fichiers SOURCES (pour acceder aux comptages), produit :
-  1. faux_negatifs_vizome.csv : fusions presentes uniquement dans vizome (FN),
-     enrichies du comptage vizome.
+  1. faux_negatifs_vizome.csv / .xlsx : fusions presentes uniquement dans vizome
+     (FN), enrichies du comptage vizome. Dans le .xlsx, les echantillons presents
+     dans vizome mais SANS aucune detection kmer sont surlignes (orange) ; une
+     colonne 'sample_absent_de_kmer' (OUI/non) porte la meme information.
   2. scatter_kmer_vs_vizome.png : sur l'ensemble des VRAIS POSITIFS, nuage de
      points (1 point = 1 paire fusion/echantillon) du comptage kmer (X) vs
      comptage vizome (Y), avec droite de regression et correlations.
@@ -12,10 +14,10 @@ A partir des fichiers SOURCES (pour acceder aux comptages), produit :
   3. hist_f1_par_fusion.png : barplot de repartition des scores F1 par fusion.
 
 Le matching (TP/FP/FN) est recalcule exactement comme compare_fusions.py
-(mode 'row' par defaut), avec l'option --common-samples.
+(mode 'row' par defaut).
 
 Usage :
-  python extra_plots.py BEAT_AML2.csv kmer2.tsv --outdir figures --common-samples
+  python extra_plots.py BEAT_AML2.csv kmer2.tsv --outdir figures
   python extra_plots.py BEAT_AML2.csv kmer2.tsv --outdir figures \
       --vizome-count junction_read_count
 """
@@ -53,6 +55,42 @@ def fusion_label(lg, rg):
     return f"{cf.norm(lg)}_{cf.norm(rg)}"
 
 
+def write_fn_xlsx(path, header, records):
+    """Ecrit la liste des faux negatifs en Excel.
+
+    Les lignes dont l'echantillon est absent du fichier kmer (derniere colonne
+    == 'OUI') sont surlignees en orange pour les distinguer.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "faux_negatifs"
+    head_fill = PatternFill("solid", fgColor="40466E")
+    head_font = Font(color="FFFFFF", bold=True)
+    absent_fill = PatternFill("solid", fgColor="FFD9B3")  # orange clair
+
+    ws.append(header)
+    for cell in ws[1]:
+        cell.fill = head_fill
+        cell.font = head_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for rec in records:
+        ws.append(rec)
+        if rec[-1] == "OUI":                  # echantillon absent de kmer
+            for cell in ws[ws.max_row]:
+                cell.fill = absent_fill
+
+    ws.freeze_panes = "A2"
+    for j, col in enumerate(header, start=1):
+        width = max(len(str(col)),
+                    *(len(str(r[j - 1])) for r in records)) + 2 if records else len(col) + 2
+        ws.column_dimensions[ws.cell(row=1, column=j).column_letter].width = min(width, 40)
+    wb.save(path)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -62,7 +100,6 @@ def main():
     p.add_argument("--match", choices=["row", "index"], default="row",
                    help="critere de matching (defaut row). 'genepair' non gere ici "
                         "car on a besoin des index pour relier les comptages.")
-    p.add_argument("--common-samples", action="store_true")
     p.add_argument("--vizome-count", choices=VIZOME_COUNT_CHOICES,
                    default="junction_read_count",
                    help="colonne BEAT AML utilisee comme comptage vizome (defaut "
@@ -74,28 +111,35 @@ def main():
     beat = cf.load_beat_aml(args.beat_aml, use_index=True)   # {key: [rows]}
     beat_keys = set(beat)
     kmer_rows = cf.parse_kmer_rows(args.kmer)
-
-    if args.common_samples:
-        bs = {k[0] for k in beat_keys}
-        ks = {r["sample_id"] for r in kmer_rows}
-        common = bs & ks
-        beat_keys = {k for k in beat_keys if k[0] in common}
-        kmer_rows = [r for r in kmer_rows if r["sample_id"] in common]
+    kmer_samples = {r["sample_id"] for r in kmer_rows}        # echantillons vus en kmer
 
     res = cf.compare_row(beat_keys, kmer_rows)
 
     # ---- 1. liste des faux negatifs (uniquement vizome), enrichie -----------
-    fn_path = os.path.join(args.outdir, "faux_negatifs_vizome.csv")
-    with open(fn_path, "w", newline="") as fh:
+    # Les echantillons presents dans vizome mais SANS aucune detection kmer sont
+    # signales (colonne sample_absent_de_kmer + surlignage dans le .xlsx).
+    header = ["SampleID", "fusion", "left_gene", "left_chr", "right_gene",
+              "right_chr", "fusion_index", args.vizome_count, "sample_absent_de_kmer"]
+    fn_records = []
+    for key in sorted(res["fn_keys"]):
+        sample, lg, lc, rg, rc, idx = key
+        brow = beat[key][0]
+        absent = sample not in kmer_samples
+        fn_records.append([sample, fusion_label(lg, rg), lg, lc, rg, rc, idx,
+                           vizome_count(brow, args.vizome_count),
+                           "OUI" if absent else "non"])
+    n_fn = len(fn_records)
+    n_absent = sum(1 for r in fn_records if r[-1] == "OUI")
+
+    fn_csv = os.path.join(args.outdir, "faux_negatifs_vizome.csv")
+    with open(fn_csv, "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["SampleID", "fusion", "left_gene", "left_chr",
-                    "right_gene", "right_chr", "fusion_index", args.vizome_count])
-        for key in sorted(res["fn_keys"]):
-            sample, lg, lc, rg, rc, idx = key
-            brow = beat[key][0]
-            w.writerow([sample, fusion_label(lg, rg), lg, lc, rg, rc, idx,
-                        vizome_count(brow, args.vizome_count)])
-    n_fn = len(res["fn_keys"])
+        w.writerow(header)
+        w.writerows(fn_records)
+
+    # version Excel avec surlignage des echantillons absents de kmer
+    fn_xlsx = os.path.join(args.outdir, "faux_negatifs_vizome.xlsx")
+    write_fn_xlsx(fn_xlsx, header, fn_records)
 
     # ---- 2. comptages sur les vrais positifs --------------------------------
     # un point = une paire (echantillon, fusion) ; on somme les comptages des TP
@@ -181,10 +225,12 @@ def main():
     # ---- resume -------------------------------------------------------------
     print(f"Vrais positifs (lignes kmer) : {res['tp']}")
     print(f"Paires fusion/echantillon (points du scatter) : {len(pairs)}")
-    print(f"Faux negatifs (uniquement vizome) : {n_fn}")
+    print(f"Faux negatifs (uniquement vizome) : {n_fn} "
+          f"(dont {n_absent} sur des echantillons absents de kmer, surlignes)")
     print(f"Fusions (pour F1) : {len(f1_values)} | F1 median = {np.median(f1_values):.3f}")
     print("Fichiers ecrits :")
-    print(f"  - {fn_path}")
+    print(f"  - {fn_csv}")
+    print(f"  - {fn_xlsx}")
     print(f"  - {tp_csv}")
     print(f"  - {scatter_path}")
     print(f"  - {hist_path}")

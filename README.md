@@ -71,7 +71,7 @@ Le script `run_pipeline.py` enchaîne les 3 étapes (comparaison → tableaux/Ve
 
 ```bash
 python3 run_pipeline.py --beat BEAT_AML2.csv --kmer kmer2.tsv \
-    --label mon_run --common-samples --match row --outdir analyses
+    --label mon_run --match row --outdir analyses
 ```
 
 Sorties créées sous `analyses/mon_run/` :
@@ -86,7 +86,9 @@ figures/
     venn_kmer_vizome.png                       # Venn kmer vs vizome
     scatter_kmer_vs_vizome.png                 # comptage kmer vs vizome (TP)
     hist_f1_par_fusion.png                     # répartition des F1
-    faux_negatifs_vizome.csv                   # liste FN enrichie du comptage
+    faux_negatifs_vizome.csv / .xlsx           # liste FN ; dans le .xlsx les
+                                               #   échantillons absents de kmer
+                                               #   sont surlignés (orange)
     tp_comptages.csv                           # données du nuage de points
 ```
 
@@ -95,10 +97,9 @@ figures/
 Créer un fichier TSV (voir `jeux_exemple.tsv`) avec une ligne par run :
 
 ```
-label	beat	kmer	match	common_samples	rows_per_page	vizome_count
-run_all	BEAT_AML2.csv	kmer2.tsv	row	no	30	junction_read_count
-run_common	BEAT_AML2.csv	kmer2.tsv	row	yes	30	junction_read_count
-run_index	BEAT_AML2.csv	kmer2.tsv	index	yes	30	junction_read_count
+label	beat	kmer	match	rows_per_page	vizome_count
+run_row	BEAT_AML2.csv	kmer2.tsv	row	30	junction_read_count
+run_index	BEAT_AML2.csv	kmer2.tsv	index	30	junction_read_count
 ```
 
 ```bash
@@ -115,7 +116,6 @@ facilement les paramètres côte à côte.
 | Paramètre | Valeurs | Effet |
 |---|---|---|
 | `--match` | `row` (défaut), `index`, `genepair` | unité de comptage des TP/FP (voir §3) |
-| `--common-samples` | présent/absent | ne garde que les échantillons présents **dans les deux** fichiers (réduit les FN inutiles dus aux échantillons non partagés ; améliore le recall) |
 | `--vizome-count` | `junction_read_count` (défaut), `spanning_frag_count`, `junction_plus_spanning`, `ffpm` | colonne BEAT AML servant d'axe Y du nuage de points |
 | `--rows-per-page` | entier (défaut 40) | nombre de lignes par page dans les tableaux PDF |
 | `--outdir` | chemin | dossier racine des sorties |
@@ -127,8 +127,7 @@ facilement les paramètres côte à côte.
 
 ```bash
 # a) comparaison -> TP/FP/FN
-python3 compare_fusions.py BEAT_AML2.csv kmer2.tsv --outdir resultats \
-    --match row --common-samples
+python3 compare_fusions.py BEAT_AML2.csv kmer2.tsv --outdir resultats --match row
 
 # b) tableaux + Venn (à partir du dossier resultats)
 python3 visualize_fusions.py resultats --outdir figures --rows-per-page 30
@@ -137,7 +136,7 @@ Rscript visualize_fusions.R resultats figures 30
 
 # c) graphes supplémentaires (scatter, F1, liste FN) à partir des fichiers sources
 python3 extra_plots.py BEAT_AML2.csv kmer2.tsv --outdir figures \
-    --match row --common-samples --vizome-count junction_read_count
+    --match row --vizome-count junction_read_count
 ```
 
 ---
