@@ -10,9 +10,13 @@ Les chiffres sont donc strictement coherents avec ces fichiers.
 Produit (dans --outdir) :
   1. confusion_par_fusion.csv / .pdf       : une ligne PAR FUSION (paire de genes)
   2. confusion_par_echantillon.csv / .pdf  : une ligne PAR ECHANTILLON
-     -> TP, FP, FN, TN, precision, recall ; TOUTES les lignes, paginees.
+     -> TP, FP, FN, TN, precision, recall, F1 ; TOUTES les lignes, paginees.
+        Une ligne TOTAL (en tete) somme TP/FP/FN/TN et recalcule prec/recall/F1.
   3. confusion.xlsx : classeur Excel regroupant les deux tableaux (un onglet chacun)
-  4. venn_kmer_vizome.png : Venn (kmer = TP+FP, vizome = TP+FN, intersection = TP)
+  4. venn_kmer_vizome.png : Venn des DETECTIONS (kmer = TP+FP, vizome = TP+FN,
+     intersection = TP).
+  5. venn_fusions_uniques.png : Venn des NOMS de fusion uniques (geneA_geneB
+     compte une seule fois : kmer seul / vizome seul / les deux).
 
 Definitions (granularite = ligne de fichier, comme compare_fusions.py) :
   Par fusion      : TP/FP/FN = nb de lignes de la fusion dans chaque fichier ;
@@ -82,6 +86,19 @@ def build_confusion(tp, fp, fn, group_col, other_col, universe):
                         round(f1, 4)])
     # tri par activite decroissante
     records.sort(key=lambda x: (-(x[1] + x[2] + x[3]), x[0]))
+
+    # ligne TOTAL : somme des TP/FP/FN/TN puis precision/recall/F1 recalcules
+    sTP = sum(r[1] for r in records)
+    sFP = sum(r[2] for r in records)
+    sFN = sum(r[3] for r in records)
+    sTN = sum(r[4] for r in records)
+    tprec = sTP / (sTP + sFP) if (sTP + sFP) else 0.0
+    trec = sTP / (sTP + sFN) if (sTP + sFN) else 0.0
+    tf1 = 2 * tprec * trec / (tprec + trec) if (tprec + trec) else 0.0
+    total_row = ["TOTAL", sTP, sFP, sFN, sTN,
+                 round(tprec, 4), round(trec, 4), round(tf1, 4)]
+    records = [total_row] + records   # TOTAL en premiere ligne
+
     header = [group_col, "TP", "FP", "FN", "TN", "precision", "recall", "F1"]
     return header, records
 
@@ -154,9 +171,46 @@ def plot_venn(path, n_tp, n_fp, n_fn):
         if v.get_patch_by_id(region):
             v.get_patch_by_id(region).set_color(color)
             v.get_patch_by_id(region).set_alpha(0.7)
-    ax.set_title("Fusions kmer vs vizome", fontsize=13, fontweight="bold")
+    ax.set_title("Fusions kmer vs vizome\n(comptage des detections : TP/FP/FN)",
+                 fontsize=12, fontweight="bold")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_venn_noms_uniques(path, conf_fusion_records):
+    """Venn sur les NOMS de fusion uniques (geneA_geneB compte une seule fois).
+
+    A partir du tableau de confusion par fusion : une fusion est 'dans kmer' si
+    TP+FP > 0, 'dans vizome' si TP+FN > 0. Chaque nom de fusion est donc classe
+    dans une seule region (kmer seul / vizome seul / les deux).
+    """
+    only_kmer = only_vizome = both = 0
+    for rec in conf_fusion_records:
+        if rec[0] == "TOTAL":
+            continue
+        TP, FP, FN = rec[1], rec[2], rec[3]
+        in_kmer = (TP + FP) > 0
+        in_vizome = (TP + FN) > 0
+        if in_kmer and in_vizome:
+            both += 1
+        elif in_kmer:
+            only_kmer += 1
+        elif in_vizome:
+            only_vizome += 1
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    v = venn2(subsets=(only_kmer, only_vizome, both),
+              set_labels=("Fusions kmer", "Fusions vizome"), ax=ax)
+    for region, color in (("10", "#66c2a5"), ("01", "#fc8d62"), ("11", "#8da0cb")):
+        if v.get_patch_by_id(region):
+            v.get_patch_by_id(region).set_color(color)
+            v.get_patch_by_id(region).set_alpha(0.7)
+    ax.set_title("Noms de fusion uniques (geneA_geneB)\n"
+                 "1 fusion = 1 fois (sans dedoublement)",
+                 fontsize=12, fontweight="bold")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return only_kmer, both, only_vizome
 
 
 def main():
@@ -194,13 +248,18 @@ def main():
     write_xlsx(xlsx_path, [("par_fusion", h_f, rec_f),
                            ("par_echantillon", h_s, rec_s)])
 
-    # 3. venn
+    # 3. venn des detections (TP/FP/FN)
     venn_path = os.path.join(args.outdir, "venn_kmer_vizome.png")
     plot_venn(venn_path, n_tp, n_fp, n_fn)
+
+    # 4. venn des noms de fusion uniques (geneA_geneB compte une seule fois)
+    venn_noms = os.path.join(args.outdir, "venn_fusions_uniques.png")
+    ok, both, ov = plot_venn_noms_uniques(venn_noms, rec_f)
 
     print(f"TP={n_tp}  FP={n_fp}  FN={n_fn}")
     print(f"Precision = {n_tp/(n_tp+n_fp):.4f} | Recall = {n_tp/(n_tp+n_fn):.4f}")
     print(f"Echantillons : {n_samples} | Fusions : {n_fusions}")
+    print(f"Noms de fusion uniques : kmer seul={ok}, communs={both}, vizome seul={ov}")
     print("Fichiers ecrits :")
     print(f"  - {args.outdir}/confusion_par_fusion.csv")
     print(f"  - {args.outdir}/confusion_par_echantillon.csv")
@@ -208,6 +267,7 @@ def main():
     print(f"  - {args.outdir}/tableau_confusion_par_fusion.pdf ({npg_f} pages)")
     print(f"  - {args.outdir}/tableau_confusion_par_echantillon.pdf ({npg_s} pages)")
     print(f"  - {venn_path}")
+    print(f"  - {venn_noms}")
 
 
 if __name__ == "__main__":

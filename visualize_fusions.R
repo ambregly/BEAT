@@ -10,9 +10,11 @@
 # Produit :
 #   1. confusion_par_fusion.csv / .pdf       : une ligne PAR FUSION (paire de genes)
 #   2. confusion_par_echantillon.csv / .pdf  : une ligne PAR ECHANTILLON
-#      -> TP, FP, FN, TN, precision, recall ; TOUTES les lignes, paginees.
+#      -> TP, FP, FN, TN, precision, recall, F1 ; TOUTES les lignes, paginees.
+#         Une ligne TOTAL (en tete) somme TP/FP/FN/TN et recalcule prec/recall/F1.
 #   3. confusion.xlsx : classeur Excel regroupant les deux tableaux (un onglet chacun)
-#   4. venn_kmer_vizome.png : Venn (kmer = TP+FP, vizome = TP+FN, intersection = TP)
+#   4. venn_kmer_vizome.png : Venn des detections (kmer=TP+FP, vizome=TP+FN, inter=TP)
+#   5. venn_fusions_uniques.png : Venn des NOMS de fusion uniques (1 fusion = 1 fois)
 #
 # Definitions (granularite = ligne de fichier, comme compare_fusions.py) :
 #   Par fusion      : TP/FP/FN = nb de lignes de la fusion dans chaque fichier ;
@@ -96,6 +98,18 @@ build_confusion <- function(group_col, other_col, universe) {
   names(df)[1] <- group_col
   df <- df[order(-(df$TP + df$FP + df$FN), df[[group_col]]), ]
   rownames(df) <- NULL
+
+  # ligne TOTAL : somme des TP/FP/FN/TN puis precision/recall/F1 recalcules
+  sTP <- sum(df$TP); sFP <- sum(df$FP); sFN <- sum(df$FN); sTN <- sum(df$TN)
+  tprec <- ifelse((sTP + sFP) > 0, sTP / (sTP + sFP), 0)
+  trec  <- ifelse((sTP + sFN) > 0, sTP / (sTP + sFN), 0)
+  tf1   <- ifelse((tprec + trec) > 0, 2 * tprec * trec / (tprec + trec), 0)
+  total <- data.frame(key = "TOTAL", TP = sTP, FP = sFP, FN = sFN, TN = sTN,
+                      precision = round(tprec, 4), recall = round(trec, 4),
+                      F1 = round(tf1, 4), stringsAsFactors = FALSE)
+  names(total)[1] <- group_col
+  df <- rbind(total, df)            # TOTAL en premiere ligne
+  rownames(df) <- NULL
   df
 }
 
@@ -138,7 +152,7 @@ write.xlsx(list(par_fusion = conf_fus, par_echantillon = conf_smp),
            headerStyle = createStyle(fgFill = "#40466E", fontColour = "#FFFFFF",
                                      textDecoration = "bold"))
 
-## ---- 3. diagramme de Venn -------------------------------------------------
+## ---- 3. diagramme de Venn (detections : TP/FP/FN) -------------------------
 venn_png <- file.path(out_dir, "venn_kmer_vizome.png")
 png(venn_png, width = 1400, height = 1200, res = 200)
 grid.newpage()
@@ -147,8 +161,27 @@ draw.pairwise.venn(
   category = c("Fusions kmer", "Fusions vizome"),
   fill = c("#66c2a5", "#fc8d62"), alpha = c(0.7, 0.7),
   lty = "blank", cex = 1.4, cat.cex = 1.2, cat.pos = c(-30, 30), ind = TRUE)
-grid.draw(textGrob("Fusions kmer vs vizome",
-                   y = 0.95, gp = gpar(fontsize = 13, fontface = "bold")))
+grid.draw(textGrob("Fusions kmer vs vizome (detections : TP/FP/FN)",
+                   y = 0.95, gp = gpar(fontsize = 12, fontface = "bold")))
+dev.off()
+
+## ---- 4. Venn des noms de fusion uniques (geneA_geneB compte 1 fois) --------
+cf_nofotal <- conf_fus[conf_fus$fusion != "TOTAL", ]
+in_kmer   <- (cf_nofotal$TP + cf_nofotal$FP) > 0
+in_vizome <- (cf_nofotal$TP + cf_nofotal$FN) > 0
+nu_both   <- sum(in_kmer & in_vizome)
+nu_kmer   <- sum(in_kmer & !in_vizome)
+nu_vizome <- sum(in_vizome & !in_kmer)
+venn_noms <- file.path(out_dir, "venn_fusions_uniques.png")
+png(venn_noms, width = 1400, height = 1200, res = 200)
+grid.newpage()
+draw.pairwise.venn(
+  area1 = nu_kmer + nu_both, area2 = nu_vizome + nu_both, cross.area = nu_both,
+  category = c("Fusions kmer", "Fusions vizome"),
+  fill = c("#66c2a5", "#fc8d62"), alpha = c(0.7, 0.7),
+  lty = "blank", cex = 1.4, cat.cex = 1.2, cat.pos = c(-30, 30), ind = TRUE)
+grid.draw(textGrob("Noms de fusion uniques (1 fusion = 1 fois)",
+                   y = 0.95, gp = gpar(fontsize = 12, fontface = "bold")))
 dev.off()
 
 ## ---- resume console -------------------------------------------------------
@@ -156,6 +189,8 @@ cat(sprintf("TP=%d  FP=%d  FN=%d\n", n_tp, n_fp, n_fn))
 cat(sprintf("Precision = %.4f | Recall = %.4f\n",
             n_tp / (n_tp + n_fp), n_tp / (n_tp + n_fn)))
 cat(sprintf("Echantillons : %d | Fusions : %d\n", n_total_samples, n_total_fusions))
+cat(sprintf("Noms de fusion uniques : kmer seul=%d, communs=%d, vizome seul=%d\n",
+            nu_kmer, nu_both, nu_vizome))
 cat("Fichiers ecrits :\n")
 cat(sprintf("  - %s/confusion_par_fusion.csv\n", out_dir))
 cat(sprintf("  - %s/confusion_par_echantillon.csv\n", out_dir))
@@ -163,3 +198,4 @@ cat(sprintf("  - %s/confusion.xlsx (onglets : par_fusion, par_echantillon)\n", o
 cat(sprintf("  - %s/tableau_confusion_par_fusion.pdf (%d pages)\n", out_dir, npg_fus))
 cat(sprintf("  - %s/tableau_confusion_par_echantillon.pdf (%d pages)\n", out_dir, npg_smp))
 cat(sprintf("  - %s\n", venn_png))
+cat(sprintf("  - %s\n", venn_noms))

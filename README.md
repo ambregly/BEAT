@@ -85,10 +85,11 @@ Sorties créées sous `analyses/mon_run/` :
 resultats/
     vrais_positifs.tsv      faux_positifs.tsv      faux_negatifs.tsv
 figures/
-    confusion_par_fusion.csv / .pdf            # 1 ligne par fusion
-    confusion_par_echantillon.csv / .pdf       # 1 ligne par échantillon
+    confusion_par_fusion.csv / .pdf            # 1 ligne par fusion (+ ligne TOTAL)
+    confusion_par_echantillon.csv / .pdf       # 1 ligne par échantillon (+ TOTAL)
     confusion.xlsx                             # 2 onglets (fusion / échantillon)
-    venn_kmer_vizome.png                       # Venn kmer vs vizome
+    venn_kmer_vizome.png                       # Venn des détections (TP/FP/FN)
+    venn_fusions_uniques.png                   # Venn des noms de fusion uniques
     scatter_kmer_vs_vizome.png                 # comptage kmer vs vizome (TP)
     hist_f1_par_fusion.png                     # répartition des F1
     faux_negatifs_vizome.csv / .xlsx           # liste FN ; dans le .xlsx les
