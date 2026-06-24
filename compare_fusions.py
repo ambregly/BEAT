@@ -39,18 +39,19 @@ from collections import defaultdict
 
 
 # colonne 1 du fichier kmer :
-#   left_gene _ left_chr _ pos _ pos _ right_gene _ right_chr _ pos _ pos _ idx|idx|idx
-# Les noms de genes peuvent contenir des '_', donc on s'ancre sur les champs
-# "chr..." et sur les positions numeriques plutot que de faire un simple split('_').
+#   left_gene _ left_chr _ pos(+) _ right_gene _ right_chr _ pos(+) _ idx|idx|idx
+# Le nombre de positions apres chaque chromosome peut varier selon la version du
+# fichier (2 positions dans les anciennes versions, 1 seule dans les plus
+# recentes) ; on capture donc 1 ou plusieurs positions. L'index (eventuellement
+# separe par '|') est TOUJOURS le dernier groupe, ce qui leve l'ambiguite.
+# Les noms de genes peuvent contenir des '_', d'ou l'ancrage sur "chr...".
 KMER_COL1_RE = re.compile(
     r"^(?P<left_gene>.+?)_"
     r"(?P<left_chr>chr[^_]+)_"
-    r"(?P<left_pos1>\d+)_"
-    r"(?P<left_pos2>\d+)_"
+    r"(?P<left_pos>\d+(?:_\d+)*)_"
     r"(?P<right_gene>.+?)_"
     r"(?P<right_chr>chr[^_]+)_"
-    r"(?P<right_pos1>\d+)_"
-    r"(?P<right_pos2>\d+)_"
+    r"(?P<right_pos>\d+(?:_\d+)*)_"
     r"(?P<indices>[\d|]+)$"
 )
 

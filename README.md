@@ -36,11 +36,16 @@ TSV **sans en-tête**, 3 colonnes :
 
 | Colonne | Contenu | Exemple |
 |---|---|---|
-| 1 | `left_gene_left_chr_pos_pos_right_gene_right_chr_pos_pos_idx\|idx\|idx` | `ELOVL5_chr6_53213614_53213640_PTP4A1_chr6_64286340_64286365_2744\|3218\|3604` |
+| 1 | `left_gene_left_chr_pos(+)_right_gene_right_chr_pos(+)_idx\|idx\|idx` | `LRCH4_chr7_100173328_PTMA_chr2_232576058_3696` |
 | 2 | `SampleID` avec un suffixe `R` | `BA2409R` |
 | 3 | comptage kmer | `7.0` |
 
 Les `idx` de la colonne 1 sont les `fusion_index` de BEAT AML associés à cette signature.
+Le nombre de positions après chaque chromosome peut varier selon la version du
+fichier (2 positions dans les anciennes versions, ex.
+`ELOVL5_chr6_53213614_53213640_PTP4A1_chr6_64286340_64286365_2744|3218|3604` ;
+1 seule dans les plus récentes) — les deux sont gérés, l'index étant toujours le
+dernier élément.
 Le suffixe `R` du `SampleID` est retiré automatiquement (`BA2409R` → `BA2409`).
 Le chromosome est harmonisé (`chr6` ↔ `6`).
 
