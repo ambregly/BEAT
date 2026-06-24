@@ -116,12 +116,9 @@ def main():
     kmer_rows = cf.parse_kmer_rows(args.kmer)
 
     if args.kmer_normal:
-        blacklist = cf.load_normal_blacklist(args.kmer_normal)
-        beat_keys = {k for k in beat_keys
-                     if (k[1], k[2], k[3], k[4]) not in blacklist}
-        kmer_rows = [r for r in kmer_rows
-                     if cf.gene_pair_key(r["left_gene"], r["left_chr"],
-                                         r["right_gene"], r["right_chr"]) not in blacklist]
+        genepairs, indices = cf.load_normal_blacklist(args.kmer_normal)
+        beat_keys, kmer_rows = cf.apply_blacklist(beat_keys, kmer_rows,
+                                                  genepairs, indices)
 
     kmer_samples = {r["sample_id"] for r in kmer_rows}        # echantillons vus en kmer
 

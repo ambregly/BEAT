@@ -180,13 +180,41 @@ def gene_pair_key(left_gene, left_chr, right_gene, right_chr):
 
 
 def load_normal_blacklist(path):
-    """Construit, depuis un fichier kmer 'normal', l'ensemble des paires de genes
-    a exclure (liste noire d'artefacts vus dans les echantillons normaux)."""
+    """Construit, depuis un fichier kmer 'normal', la liste noire d'artefacts.
+
+    Renvoie un couple (paires_de_genes, indices) :
+      - paires_de_genes : set de (lg, lc, rg, rc) normalises
+      - indices         : set de fusion_index (les index listes en colonne 1)
+    Une fusion sera exclue si sa paire de genes OU son index y figure.
+    """
     rows = parse_kmer_rows(path)
-    return {
-        gene_pair_key(r["left_gene"], r["left_chr"], r["right_gene"], r["right_chr"])
-        for r in rows
-    }
+    genepairs, indices = set(), set()
+    for r in rows:
+        genepairs.add(gene_pair_key(r["left_gene"], r["left_chr"],
+                                    r["right_gene"], r["right_chr"]))
+        for idx in r["indices"]:
+            indices.add(norm(idx))
+    return genepairs, indices
+
+
+def apply_blacklist(beat_keys, kmer_rows, genepairs, indices):
+    """Retire de BEAT et de kmer les fusions dont la paire de genes OU l'index
+    figure dans la liste noire (issue d'un fichier kmer normal)."""
+    new_beat = set()
+    for k in beat_keys:
+        gp = (k[1], k[2], k[3], k[4])
+        idx = k[5] if len(k) > 5 else None          # present en mode row/index
+        if gp in genepairs or (idx is not None and idx in indices):
+            continue
+        new_beat.add(k)
+    new_kmer = []
+    for r in kmer_rows:
+        gp = gene_pair_key(r["left_gene"], r["left_chr"],
+                           r["right_gene"], r["right_chr"])
+        if gp in genepairs or any(norm(i) in indices for i in r["indices"]):
+            continue
+        new_kmer.append(r)
+    return new_beat, new_kmer
 
 
 def row_candidate_keys(row, use_index=True):
@@ -298,17 +326,14 @@ def main():
     kmer_rows = parse_kmer_rows(args.kmer)
 
     if args.kmer_normal:
-        blacklist = load_normal_blacklist(args.kmer_normal)
+        genepairs, indices = load_normal_blacklist(args.kmer_normal)
         nb_b, nk_b = len(beat_keys), len(kmer_rows)
-        beat_keys = {k for k in beat_keys
-                     if (k[1], k[2], k[3], k[4]) not in blacklist}
-        kmer_rows = [r for r in kmer_rows
-                     if gene_pair_key(r["left_gene"], r["left_chr"],
-                                      r["right_gene"], r["right_chr"]) not in blacklist]
+        beat_keys, kmer_rows = apply_blacklist(beat_keys, kmer_rows,
+                                               genepairs, indices)
         sys.stderr.write(
-            f"[kmer-normal] {len(blacklist)} paires de genes en liste noire ; "
-            f"retire {nb_b - len(beat_keys)} fusions BEAT et "
-            f"{nk_b - len(kmer_rows)} lignes kmer\n"
+            f"[kmer-normal] liste noire : {len(genepairs)} paires de genes + "
+            f"{len(indices)} index ; retire {nb_b - len(beat_keys)} fusions BEAT "
+            f"et {nk_b - len(kmer_rows)} lignes kmer\n"
         )
 
     if args.match == "row":

@@ -122,7 +122,7 @@ facilement les paramètres côte à côte.
 | Paramètre | Valeurs | Effet |
 |---|---|---|
 | `--match` | `row` (défaut), `index`, `genepair` | unité de comptage des TP/FP (voir §3) |
-| `--kmer-normal` | chemin d'un fichier kmer (échantillons normaux) | **liste noire** : les paires de gènes présentes dans ce fichier sont retirées de **BEAT AML et de kmer** avant la comparaison (filtre les artefacts récurrents) |
+| `--kmer-normal` | chemin d'un fichier kmer (échantillons normaux) | **liste noire** : une fusion est retirée de **BEAT AML et de kmer** si sa **paire de gènes** OU son **fusion_index** figure dans ce fichier (filtre les artefacts récurrents ; l'index permet de cibler précisément les fusions normales aussi présentes dans BEAT) |
 | `--vizome-count` | `junction_read_count` (défaut), `spanning_frag_count`, `junction_plus_spanning`, `ffpm` | colonne BEAT AML servant d'axe Y du nuage de points |
 | `--rows-per-page` | entier (défaut 40) | nombre de lignes par page dans les tableaux PDF |
 | `--outdir` | chemin | dossier racine des sorties |
