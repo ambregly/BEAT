@@ -104,6 +104,9 @@ def main():
                    default="junction_read_count",
                    help="colonne BEAT AML utilisee comme comptage vizome (defaut "
                         "junction_read_count)")
+    p.add_argument("--kmer-normal", default=None,
+                   help="fichier kmer normal : retire ces paires de genes de BEAT "
+                        "et kmer (meme filtrage que compare_fusions.py)")
     args = p.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -111,6 +114,15 @@ def main():
     beat = cf.load_beat_aml(args.beat_aml, use_index=True)   # {key: [rows]}
     beat_keys = set(beat)
     kmer_rows = cf.parse_kmer_rows(args.kmer)
+
+    if args.kmer_normal:
+        blacklist = cf.load_normal_blacklist(args.kmer_normal)
+        beat_keys = {k for k in beat_keys
+                     if (k[1], k[2], k[3], k[4]) not in blacklist}
+        kmer_rows = [r for r in kmer_rows
+                     if cf.gene_pair_key(r["left_gene"], r["left_chr"],
+                                         r["right_gene"], r["right_chr"]) not in blacklist]
+
     kmer_samples = {r["sample_id"] for r in kmer_rows}        # echantillons vus en kmer
 
     res = cf.compare_row(beat_keys, kmer_rows)

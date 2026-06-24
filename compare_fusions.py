@@ -174,6 +174,21 @@ def parse_kmer_rows(path):
     return rows
 
 
+def gene_pair_key(left_gene, left_chr, right_gene, right_chr):
+    """Identite 'paire de genes' d'une fusion (sans echantillon ni index)."""
+    return (norm(left_gene), norm_chr(left_chr), norm(right_gene), norm_chr(right_chr))
+
+
+def load_normal_blacklist(path):
+    """Construit, depuis un fichier kmer 'normal', l'ensemble des paires de genes
+    a exclure (liste noire d'artefacts vus dans les echantillons normaux)."""
+    rows = parse_kmer_rows(path)
+    return {
+        gene_pair_key(r["left_gene"], r["left_chr"], r["right_gene"], r["right_chr"])
+        for r in rows
+    }
+
+
 def row_candidate_keys(row, use_index=True):
     """Cles candidates generees par une ligne kmer (une par fusion_index)."""
     return [
@@ -271,12 +286,30 @@ def main():
                         default="row",
                         help="critere de comparaison (defaut: row). Voir l'aide en "
                              "tete de fichier.")
+    parser.add_argument("--kmer-normal", default=None,
+                        help="fichier kmer d'echantillons normaux : les paires de "
+                             "genes qui y figurent sont retirees de BEAT AML ET de "
+                             "kmer avant la comparaison (liste noire d'artefacts).")
     args = parser.parse_args()
 
     use_index = (args.match != "genepair")
     beat = load_beat_aml(args.beat_aml, use_index=use_index)
     beat_keys = set(beat)
     kmer_rows = parse_kmer_rows(args.kmer)
+
+    if args.kmer_normal:
+        blacklist = load_normal_blacklist(args.kmer_normal)
+        nb_b, nk_b = len(beat_keys), len(kmer_rows)
+        beat_keys = {k for k in beat_keys
+                     if (k[1], k[2], k[3], k[4]) not in blacklist}
+        kmer_rows = [r for r in kmer_rows
+                     if gene_pair_key(r["left_gene"], r["left_chr"],
+                                      r["right_gene"], r["right_chr"]) not in blacklist]
+        sys.stderr.write(
+            f"[kmer-normal] {len(blacklist)} paires de genes en liste noire ; "
+            f"retire {nb_b - len(beat_keys)} fusions BEAT et "
+            f"{nk_b - len(kmer_rows)} lignes kmer\n"
+        )
 
     if args.match == "row":
         res = compare_row(beat_keys, kmer_rows)
