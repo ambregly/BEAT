@@ -160,8 +160,10 @@ def parse_kmer_rows(path):
                 "count": count,            # 3e colonne kmer (comptage)
                 "left_gene": m.group("left_gene"),
                 "left_chr": m.group("left_chr"),
+                "left_pos": m.group("left_pos"),
                 "right_gene": m.group("right_gene"),
                 "right_chr": m.group("right_chr"),
+                "right_pos": m.group("right_pos"),
                 "indices": indices,
                 "col1": col1,
             })
@@ -282,12 +284,31 @@ def write_keys(path, keys, use_index=True):
             writer.writerow(key)
 
 
+def write_fn_with_pos(path, fn_keys, beat, use_index=True):
+    """Ecrit les faux negatifs (issus de BEAT AML) avec la position BEAT."""
+    header = ["SampleID", "left_gene", "left_chr", "left_pos",
+              "right_gene", "right_chr", "right_pos"]
+    if use_index:
+        header.append("fusion_index")
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh, delimiter="\t")
+        writer.writerow(header)
+        for key in sorted(fn_keys):
+            brow = beat[key][0]               # ligne BEAT AML correspondante
+            sample, lg, lc, rg, rc = key[0], key[1], key[2], key[3], key[4]
+            line = [sample, lg, lc, brow.get("left_pos", ""),
+                    rg, rc, brow.get("right_pos", "")]
+            if use_index:
+                line.append(key[5])
+            writer.writerow(line)
+
+
 def write_rows(path, rows, with_hit=False):
     """Ecrit des lignes kmer (mode 'row') dans un tsv."""
     with open(path, "w", newline="") as fh:
         writer = csv.writer(fh, delimiter="\t")
-        header = ["kmer_line", "SampleID", "left_gene", "left_chr",
-                  "right_gene", "right_chr", "indices"]
+        header = ["kmer_line", "SampleID", "left_gene", "left_chr", "left_pos",
+                  "right_gene", "right_chr", "right_pos", "indices"]
         if with_hit:
             header.append("index_matche")
         writer.writerow(header)
@@ -295,9 +316,10 @@ def write_rows(path, rows, with_hit=False):
             row, hits = item if with_hit else (item, None)
             # noms de genes normalises (majuscules) pour rester coherent avec le
             # fichier des FN et eviter les doublons de casse (ex: C15orf39/C15ORF39)
-            base = [row["line"], row["sample_id"], norm(row["left_gene"]),
-                    norm_chr(row["left_chr"]), norm(row["right_gene"]),
-                    norm_chr(row["right_chr"]), "|".join(row["indices"])]
+            base = [row["line"], row["sample_id"],
+                    norm(row["left_gene"]), norm_chr(row["left_chr"]), row["left_pos"],
+                    norm(row["right_gene"]), norm_chr(row["right_chr"]), row["right_pos"],
+                    "|".join(row["indices"])]
             if with_hit:
                 base.append("|".join(sorted({h[-1] for h in hits})))
             writer.writerow(base)
@@ -373,8 +395,8 @@ def main():
                        res["tp_rows"], with_hit=True)
             write_rows(os.path.join(args.outdir, "faux_positifs.tsv"),
                        res["fp_rows"], with_hit=False)
-            write_keys(os.path.join(args.outdir, "faux_negatifs.tsv"),
-                       res["fn_keys"], use_index=True)
+            write_fn_with_pos(os.path.join(args.outdir, "faux_negatifs.tsv"),
+                              res["fn_keys"], beat, use_index=True)
         else:
             write_keys(os.path.join(args.outdir, "vrais_positifs.tsv"),
                        res["tp_keys"], use_index)
