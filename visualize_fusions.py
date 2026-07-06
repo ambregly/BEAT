@@ -8,10 +8,13 @@ DIRECTEMENT a partir des fichiers produits par compare_fusions.py :
 Les chiffres sont donc strictement coherents avec ces fichiers.
 
 Produit (dans --outdir) :
-  1. confusion_par_fusion.csv / .pdf       : une ligne PAR FUSION (paire de genes)
+  1. confusion_par_fusion.csv / .pdf       : une ligne PAR JONCTION UNIQUE
+     (fusion + chromosomes + positions) -> chaque breakpoint distinct est compte
+     separement ; la somme TP+FP+FN+TN d'une ligne vaut le nombre d'echantillons.
   2. confusion_par_echantillon.csv / .pdf  : une ligne PAR ECHANTILLON
      -> TP, FP, FN, TN, precision, recall, F1 ; TOUTES les lignes, paginees.
         Une ligne TOTAL (en tete) somme TP/FP/FN/TN et recalcule prec/recall/F1.
+     (les Venn, scatter et histogramme F1 restent au niveau paire de genes)
   3. confusion.xlsx : classeur Excel regroupant les deux tableaux (un onglet chacun)
   4. venn_kmer_vizome.png : Venn des DETECTIONS (kmer = TP+FP, vizome = TP+FN,
      intersection = TP).
@@ -53,8 +56,14 @@ def read_tsv(path):
             raise SystemExit(f"[{path}] colonnes manquantes : {sorted(miss)}")
         rows = []
         for r in reader:
-            # noms de genes en majuscules pour fusionner les variantes de casse
+            # nom de fusion = paire de genes (majuscules) -> pour les REPRESENTATIONS
             r["fusion"] = f'{r["left_gene"].upper()}_{r["right_gene"].upper()}'
+            # jonction = fusion + chromosomes + POSITIONS -> pour la TABLE de confusion
+            # (chaque breakpoint distinct est une fusion unique)
+            r["left_pos"] = r.get("left_pos", "")
+            r["right_pos"] = r.get("right_pos", "")
+            r["jonction"] = (r["fusion"], r["left_chr"], r["left_pos"],
+                             r["right_chr"], r["right_pos"])
             rows.append(r)
         return rows
 
@@ -100,6 +109,52 @@ def build_confusion(tp, fp, fn, group_col, other_col, universe):
     records = [total_row] + records   # TOTAL en premiere ligne
 
     header = [group_col, "TP", "FP", "FN", "TN", "precision", "recall", "F1"]
+    return header, records
+
+
+def build_confusion_junction(tp, fp, fn, n_samples):
+    """Table de confusion regroupee par JONCTION UNIQUE (fusion + positions).
+
+    Chaque breakpoint distinct est une fusion a part entiere ; la somme
+    TP+FP+FN+TN de chaque ligne vaut n_samples.
+    """
+    def counts(rows):
+        d = defaultdict(int)
+        for r in rows:
+            d[r["jonction"]] += 1
+        return d
+
+    ctp, cfp, cfn = counts(tp), counts(fp), counts(fn)
+    distinct_samples = defaultdict(set)
+    for rows in (tp, fp, fn):
+        for r in rows:
+            distinct_samples[r["jonction"]].add(r["SampleID"])
+
+    keys = set(ctp) | set(cfp) | set(cfn)
+    records = []
+    for k in keys:
+        fusion, lchr, lpos, rchr, rpos = k
+        TP, FP, FN = ctp.get(k, 0), cfp.get(k, 0), cfn.get(k, 0)
+        TN = n_samples - len(distinct_samples[k])
+        precision = TP / (TP + FP) if (TP + FP) else 0.0
+        recall = TP / (TP + FN) if (TP + FN) else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        records.append([fusion, lchr, lpos, rchr, rpos, TP, FP, FN, TN,
+                        round(precision, 4), round(recall, 4), round(f1, 4)])
+    # tri par activite decroissante puis nom de fusion
+    records.sort(key=lambda x: (-(x[5] + x[6] + x[7]), x[0], x[2], x[4]))
+
+    sTP = sum(r[5] for r in records); sFP = sum(r[6] for r in records)
+    sFN = sum(r[7] for r in records); sTN = sum(r[8] for r in records)
+    tprec = sTP / (sTP + sFP) if (sTP + sFP) else 0.0
+    trec = sTP / (sTP + sFN) if (sTP + sFN) else 0.0
+    tf1 = 2 * tprec * trec / (tprec + trec) if (tprec + trec) else 0.0
+    total = ["TOTAL", "", "", "", "", sTP, sFP, sFN, sTN,
+             round(tprec, 4), round(trec, 4), round(tf1, 4)]
+    records = [total] + records
+
+    header = ["fusion", "left_chr", "left_pos", "right_chr", "right_pos",
+              "TP", "FP", "FN", "TN", "precision", "recall", "F1"]
     return header, records
 
 
@@ -177,26 +232,17 @@ def plot_venn(path, n_tp, n_fp, n_fn):
     plt.close(fig)
 
 
-def plot_venn_noms_uniques(path, conf_fusion_records):
+def plot_venn_noms_uniques(path, tp, fp, fn):
     """Venn sur les NOMS de fusion uniques (geneA_geneB compte une seule fois).
 
-    A partir du tableau de confusion par fusion : une fusion est 'dans kmer' si
-    TP+FP > 0, 'dans vizome' si TP+FN > 0. Chaque nom de fusion est donc classe
-    dans une seule region (kmer seul / vizome seul / les deux).
+    Logique paire-de-genes (inchangee) : une fusion est 'dans kmer' si elle
+    apparait en TP ou FP, 'dans vizome' si elle apparait en TP ou FN.
     """
-    only_kmer = only_vizome = both = 0
-    for rec in conf_fusion_records:
-        if rec[0] == "TOTAL":
-            continue
-        TP, FP, FN = rec[1], rec[2], rec[3]
-        in_kmer = (TP + FP) > 0
-        in_vizome = (TP + FN) > 0
-        if in_kmer and in_vizome:
-            both += 1
-        elif in_kmer:
-            only_kmer += 1
-        elif in_vizome:
-            only_vizome += 1
+    kmer_names = {r["fusion"] for r in tp} | {r["fusion"] for r in fp}
+    vizome_names = {r["fusion"] for r in tp} | {r["fusion"] for r in fn}
+    only_kmer = len(kmer_names - vizome_names)
+    only_vizome = len(vizome_names - kmer_names)
+    both = len(kmer_names & vizome_names)
 
     fig, ax = plt.subplots(figsize=(7, 6))
     v = venn2(subsets=(only_kmer, only_vizome, both),
@@ -230,15 +276,17 @@ def main():
 
     n_samples = len({r["SampleID"] for rows in (tp, fp, fn) for r in rows})
     n_fusions = len({r["fusion"] for rows in (tp, fp, fn) for r in rows})
+    n_junctions = len({r["jonction"] for rows in (tp, fp, fn) for r in rows})
 
-    # 1. par fusion
-    h_f, rec_f = build_confusion(tp, fp, fn, "fusion", "SampleID", n_samples)
+    # 1. par fusion = par JONCTION UNIQUE (fusion + positions) ; somme/ligne = n_samples
+    h_f, rec_f = build_confusion_junction(tp, fp, fn, n_samples)
     write_csv(os.path.join(args.outdir, "confusion_par_fusion.csv"), h_f, rec_f)
     npg_f = write_table_pdf(os.path.join(args.outdir, "tableau_confusion_par_fusion.pdf"),
-                            h_f, rec_f, "Confusion par fusion", args.rows_per_page)
+                            h_f, rec_f, "Confusion par fusion (jonction unique)",
+                            args.rows_per_page)
 
-    # 2. par echantillon
-    h_s, rec_s = build_confusion(tp, fp, fn, "SampleID", "fusion", n_fusions)
+    # 2. par echantillon (autre dimension = jonction ; somme/ligne = n_junctions)
+    h_s, rec_s = build_confusion(tp, fp, fn, "SampleID", "jonction", n_junctions)
     write_csv(os.path.join(args.outdir, "confusion_par_echantillon.csv"), h_s, rec_s)
     npg_s = write_table_pdf(os.path.join(args.outdir, "tableau_confusion_par_echantillon.pdf"),
                             h_s, rec_s, "Confusion par echantillon", args.rows_per_page)
@@ -254,11 +302,12 @@ def main():
 
     # 4. venn des noms de fusion uniques (geneA_geneB compte une seule fois)
     venn_noms = os.path.join(args.outdir, "venn_fusions_uniques.png")
-    ok, both, ov = plot_venn_noms_uniques(venn_noms, rec_f)
+    ok, both, ov = plot_venn_noms_uniques(venn_noms, tp, fp, fn)
 
     print(f"TP={n_tp}  FP={n_fp}  FN={n_fn}")
     print(f"Precision = {n_tp/(n_tp+n_fp):.4f} | Recall = {n_tp/(n_tp+n_fn):.4f}")
-    print(f"Echantillons : {n_samples} | Fusions : {n_fusions}")
+    print(f"Echantillons : {n_samples} | Paires de genes : {n_fusions} | "
+          f"Jonctions uniques : {n_junctions}")
     print(f"Noms de fusion uniques : kmer seul={ok}, communs={both}, vizome seul={ov}")
     print("Fichiers ecrits :")
     print(f"  - {args.outdir}/confusion_par_fusion.csv")

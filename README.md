@@ -85,7 +85,8 @@ Sorties créées sous `analyses/mon_run/` :
 resultats/
     vrais_positifs.tsv      faux_positifs.tsv      faux_negatifs.tsv
 figures/
-    confusion_par_fusion.csv / .pdf            # 1 ligne par fusion (+ ligne TOTAL)
+    confusion_par_fusion.csv / .pdf            # 1 ligne par JONCTION unique
+                                               #   (fusion + positions) + ligne TOTAL
     confusion_par_echantillon.csv / .pdf       # 1 ligne par échantillon (+ TOTAL)
     confusion.xlsx                             # 2 onglets (fusion / échantillon)
     venn_kmer_vizome.png                       # Venn des détections (TP/FP/FN)
