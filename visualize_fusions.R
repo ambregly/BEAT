@@ -56,13 +56,14 @@ read_tsv <- function(name) {
   miss <- setdiff(need_cols, colnames(df))
   if (length(miss) > 0)
     stop(paste0("[", name, "] colonnes manquantes : ", paste(miss, collapse = ", ")))
-  # nom de fusion = paire de genes (majuscules) -> pour les REPRESENTATIONS
-  df$fusion <- paste(toupper(df$left_gene), toupper(df$right_gene), sep = "_")
-  # jonction = fusion + chromosomes + POSITIONS -> pour la TABLE de confusion
+  lg <- toupper(df$left_gene); rg <- toupper(df$right_gene)
+  # nom de fusion = paire de genes -> pour les REPRESENTATIONS
+  df$fusion <- paste(lg, rg, sep = "_")
+  # identifiant unique de jonction = genes + chr + positions -> TABLE de confusion
   lpos <- if ("left_pos"  %in% colnames(df)) df$left_pos  else ""
   rpos <- if ("right_pos" %in% colnames(df)) df$right_pos else ""
-  df$left_pos <- lpos; df$right_pos <- rpos
-  df$jonction <- paste(df$fusion, df$left_chr, lpos, df$right_chr, rpos, sep = "|")
+  df$fusion_id <- paste0(lg, "_chr", df$left_chr, "_", lpos, "_",
+                         rg, "_chr", df$right_chr, "_", rpos)
   df
 }
 
@@ -72,8 +73,8 @@ fn <- read_tsv("faux_negatifs.tsv")
 n_tp <- nrow(tp); n_fp <- nrow(fp); n_fn <- nrow(fn)
 
 n_total_samples   <- length(unique(c(tp$SampleID, fp$SampleID, fn$SampleID)))
-n_total_fusions   <- length(unique(c(tp$fusion,   fp$fusion,   fn$fusion)))
-n_total_junctions <- length(unique(c(tp$jonction, fp$jonction, fn$jonction)))
+n_total_fusions   <- length(unique(c(tp$fusion,    fp$fusion,    fn$fusion)))
+n_total_junctions <- length(unique(c(tp$fusion_id, fp$fusion_id, fn$fusion_id)))
 
 ## ---- construction d'un tableau de confusion -------------------------------
 # group_col   : colonne de regroupement (lignes du tableau)
@@ -119,49 +120,6 @@ build_confusion <- function(group_col, other_col, universe) {
   df
 }
 
-## ---- table de confusion par JONCTION UNIQUE (fusion + positions) ----------
-build_confusion_junction <- function(n_samples) {
-  all <- rbind(
-    data.frame(jonction = tp$jonction, fusion = tp$fusion, lc = tp$left_chr,
-               lp = tp$left_pos, rc = tp$right_chr, rp = tp$right_pos,
-               SampleID = tp$SampleID, cat = "TP", stringsAsFactors = FALSE),
-    data.frame(jonction = fp$jonction, fusion = fp$fusion, lc = fp$left_chr,
-               lp = fp$left_pos, rc = fp$right_chr, rp = fp$right_pos,
-               SampleID = fp$SampleID, cat = "FP", stringsAsFactors = FALSE),
-    data.frame(jonction = fn$jonction, fusion = fn$fusion, lc = fn$left_chr,
-               lp = fn$left_pos, rc = fn$right_chr, rp = fn$right_pos,
-               SampleID = fn$SampleID, cat = "FN", stringsAsFactors = FALSE))
-
-  keys <- unique(all$jonction)
-  rows <- lapply(keys, function(k) {
-    sub <- all[all$jonction == k, ]
-    TP <- sum(sub$cat == "TP"); FP <- sum(sub$cat == "FP"); FN <- sum(sub$cat == "FN")
-    TN <- n_samples - length(unique(sub$SampleID))
-    prec <- ifelse((TP + FP) > 0, TP / (TP + FP), 0)
-    rec  <- ifelse((TP + FN) > 0, TP / (TP + FN), 0)
-    f1   <- ifelse((prec + rec) > 0, 2 * prec * rec / (prec + rec), 0)
-    data.frame(fusion = sub$fusion[1], left_chr = sub$lc[1], left_pos = sub$lp[1],
-               right_chr = sub$rc[1], right_pos = sub$rp[1],
-               TP = TP, FP = FP, FN = FN, TN = TN,
-               precision = round(prec, 4), recall = round(rec, 4),
-               F1 = round(f1, 4), stringsAsFactors = FALSE)
-  })
-  df <- do.call(rbind, rows)
-  df <- df[order(-(df$TP + df$FP + df$FN), df$fusion, df$left_pos, df$right_pos), ]
-  rownames(df) <- NULL
-
-  sTP <- sum(df$TP); sFP <- sum(df$FP); sFN <- sum(df$FN); sTN <- sum(df$TN)
-  tprec <- ifelse((sTP + sFP) > 0, sTP / (sTP + sFP), 0)
-  trec  <- ifelse((sTP + sFN) > 0, sTP / (sTP + sFN), 0)
-  tf1   <- ifelse((tprec + trec) > 0, 2 * tprec * trec / (tprec + trec), 0)
-  total <- data.frame(fusion = "TOTAL", left_chr = "", left_pos = "",
-                      right_chr = "", right_pos = "", TP = sTP, FP = sFP,
-                      FN = sFN, TN = sTN, precision = round(tprec, 4),
-                      recall = round(trec, 4), F1 = round(tf1, 4),
-                      stringsAsFactors = FALSE)
-  rbind(total, df)
-}
-
 ## ---- ecriture d'un tableau en PDF multi-pages -----------------------------
 write_table_pdf <- function(df, pdf_path, titre) {
   n   <- nrow(df)
@@ -183,14 +141,14 @@ write_table_pdf <- function(df, pdf_path, titre) {
   npg
 }
 
-## ---- 1. tableau PAR FUSION = par JONCTION UNIQUE (fusion + positions) ------
-conf_fus <- build_confusion_junction(n_total_samples)
+## ---- 1. tableau PAR FUSION = par JONCTION UNIQUE (identifiant genes+chr+pos) --
+conf_fus <- build_confusion("fusion_id", "SampleID", n_total_samples)
 write.csv(conf_fus, file.path(out_dir, "confusion_par_fusion.csv"), row.names = FALSE)
 npg_fus <- write_table_pdf(conf_fus, file.path(out_dir, "tableau_confusion_par_fusion.pdf"),
                            "Confusion par fusion (jonction unique)")
 
 ## ---- 2. tableau PAR ECHANTILLON (autre dimension = jonction) ---------------
-conf_smp <- build_confusion("SampleID", "jonction", n_total_junctions)
+conf_smp <- build_confusion("SampleID", "fusion_id", n_total_junctions)
 write.csv(conf_smp, file.path(out_dir, "confusion_par_echantillon.csv"), row.names = FALSE)
 npg_smp <- write_table_pdf(conf_smp, file.path(out_dir, "tableau_confusion_par_echantillon.pdf"),
                            "Confusion par echantillon")

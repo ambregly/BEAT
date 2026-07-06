@@ -56,14 +56,14 @@ def read_tsv(path):
             raise SystemExit(f"[{path}] colonnes manquantes : {sorted(miss)}")
         rows = []
         for r in reader:
-            # nom de fusion = paire de genes (majuscules) -> pour les REPRESENTATIONS
-            r["fusion"] = f'{r["left_gene"].upper()}_{r["right_gene"].upper()}'
-            # jonction = fusion + chromosomes + POSITIONS -> pour la TABLE de confusion
-            # (chaque breakpoint distinct est une fusion unique)
-            r["left_pos"] = r.get("left_pos", "")
-            r["right_pos"] = r.get("right_pos", "")
-            r["jonction"] = (r["fusion"], r["left_chr"], r["left_pos"],
-                             r["right_chr"], r["right_pos"])
+            lg, rg = r["left_gene"].upper(), r["right_gene"].upper()
+            # nom de fusion = paire de genes -> pour les REPRESENTATIONS
+            r["fusion"] = f"{lg}_{rg}"
+            # identifiant unique de jonction = genes + chr + positions
+            # -> pour la TABLE de confusion (chaque breakpoint distinct = 1 fusion)
+            lp, rp = r.get("left_pos", ""), r.get("right_pos", "")
+            r["fusion_id"] = (f"{lg}_chr{r['left_chr']}_{lp}_"
+                              f"{rg}_chr{r['right_chr']}_{rp}")
             rows.append(r)
         return rows
 
@@ -109,52 +109,6 @@ def build_confusion(tp, fp, fn, group_col, other_col, universe):
     records = [total_row] + records   # TOTAL en premiere ligne
 
     header = [group_col, "TP", "FP", "FN", "TN", "precision", "recall", "F1"]
-    return header, records
-
-
-def build_confusion_junction(tp, fp, fn, n_samples):
-    """Table de confusion regroupee par JONCTION UNIQUE (fusion + positions).
-
-    Chaque breakpoint distinct est une fusion a part entiere ; la somme
-    TP+FP+FN+TN de chaque ligne vaut n_samples.
-    """
-    def counts(rows):
-        d = defaultdict(int)
-        for r in rows:
-            d[r["jonction"]] += 1
-        return d
-
-    ctp, cfp, cfn = counts(tp), counts(fp), counts(fn)
-    distinct_samples = defaultdict(set)
-    for rows in (tp, fp, fn):
-        for r in rows:
-            distinct_samples[r["jonction"]].add(r["SampleID"])
-
-    keys = set(ctp) | set(cfp) | set(cfn)
-    records = []
-    for k in keys:
-        fusion, lchr, lpos, rchr, rpos = k
-        TP, FP, FN = ctp.get(k, 0), cfp.get(k, 0), cfn.get(k, 0)
-        TN = n_samples - len(distinct_samples[k])
-        precision = TP / (TP + FP) if (TP + FP) else 0.0
-        recall = TP / (TP + FN) if (TP + FN) else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-        records.append([fusion, lchr, lpos, rchr, rpos, TP, FP, FN, TN,
-                        round(precision, 4), round(recall, 4), round(f1, 4)])
-    # tri par activite decroissante puis nom de fusion
-    records.sort(key=lambda x: (-(x[5] + x[6] + x[7]), x[0], x[2], x[4]))
-
-    sTP = sum(r[5] for r in records); sFP = sum(r[6] for r in records)
-    sFN = sum(r[7] for r in records); sTN = sum(r[8] for r in records)
-    tprec = sTP / (sTP + sFP) if (sTP + sFP) else 0.0
-    trec = sTP / (sTP + sFN) if (sTP + sFN) else 0.0
-    tf1 = 2 * tprec * trec / (tprec + trec) if (tprec + trec) else 0.0
-    total = ["TOTAL", "", "", "", "", sTP, sFP, sFN, sTN,
-             round(tprec, 4), round(trec, 4), round(tf1, 4)]
-    records = [total] + records
-
-    header = ["fusion", "left_chr", "left_pos", "right_chr", "right_pos",
-              "TP", "FP", "FN", "TN", "precision", "recall", "F1"]
     return header, records
 
 
@@ -276,17 +230,18 @@ def main():
 
     n_samples = len({r["SampleID"] for rows in (tp, fp, fn) for r in rows})
     n_fusions = len({r["fusion"] for rows in (tp, fp, fn) for r in rows})
-    n_junctions = len({r["jonction"] for rows in (tp, fp, fn) for r in rows})
+    n_junctions = len({r["fusion_id"] for rows in (tp, fp, fn) for r in rows})
 
-    # 1. par fusion = par JONCTION UNIQUE (fusion + positions) ; somme/ligne = n_samples
-    h_f, rec_f = build_confusion_junction(tp, fp, fn, n_samples)
+    # 1. par fusion = par JONCTION UNIQUE (identifiant genes+chr+positions)
+    #    somme d'une ligne = n_samples
+    h_f, rec_f = build_confusion(tp, fp, fn, "fusion_id", "SampleID", n_samples)
     write_csv(os.path.join(args.outdir, "confusion_par_fusion.csv"), h_f, rec_f)
     npg_f = write_table_pdf(os.path.join(args.outdir, "tableau_confusion_par_fusion.pdf"),
                             h_f, rec_f, "Confusion par fusion (jonction unique)",
                             args.rows_per_page)
 
     # 2. par echantillon (autre dimension = jonction ; somme/ligne = n_junctions)
-    h_s, rec_s = build_confusion(tp, fp, fn, "SampleID", "jonction", n_junctions)
+    h_s, rec_s = build_confusion(tp, fp, fn, "SampleID", "fusion_id", n_junctions)
     write_csv(os.path.join(args.outdir, "confusion_par_echantillon.csv"), h_s, rec_s)
     npg_s = write_table_pdf(os.path.join(args.outdir, "tableau_confusion_par_echantillon.pdf"),
                             h_s, rec_s, "Confusion par echantillon", args.rows_per_page)
