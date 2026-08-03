@@ -220,6 +220,8 @@ def main():
     parser.add_argument("--outdir", default="figures", help="repertoire de sortie")
     parser.add_argument("--rows-per-page", type=int, default=40,
                         help="lignes par page dans les PDF (defaut 40)")
+    parser.add_argument("--fig-format", choices=["png", "pdf"], default="png",
+                        help="format des diagrammes de Venn (defaut png)")
     args = parser.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -252,11 +254,11 @@ def main():
                            ("par_echantillon", h_s, rec_s)])
 
     # 3. venn des detections (TP/FP/FN)
-    venn_path = os.path.join(args.outdir, "venn_kmer_vizome.png")
+    venn_path = os.path.join(args.outdir, f"venn_kmer_vizome.{args.fig_format}")
     plot_venn(venn_path, n_tp, n_fp, n_fn)
 
     # 4. venn des noms de fusion uniques (geneA_geneB compte une seule fois)
-    venn_noms = os.path.join(args.outdir, "venn_fusions_uniques.png")
+    venn_noms = os.path.join(args.outdir, f"venn_fusions_uniques.{args.fig_format}")
     ok, both, ov = plot_venn_noms_uniques(venn_noms, tp, fp, fn)
 
     print(f"TP={n_tp}  FP={n_fp}  FN={n_fn}")

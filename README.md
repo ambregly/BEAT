@@ -126,6 +126,7 @@ facilement les paramètres côte à côte.
 | `--kmer-normal` | chemin d'un fichier kmer (échantillons normaux) | **liste noire** : une fusion est retirée de **BEAT AML et de kmer** si sa **paire de gènes** OU son **fusion_index** figure dans ce fichier (filtre les artefacts récurrents ; l'index permet de cibler précisément les fusions normales aussi présentes dans BEAT) |
 | `--vizome-count` | `junction_read_count` (défaut), `spanning_frag_count`, `junction_plus_spanning`, `ffpm` | colonne BEAT AML servant d'axe Y du nuage de points |
 | `--rows-per-page` | entier (défaut 40) | nombre de lignes par page dans les tableaux PDF |
+| `--fig-format` | `png` (défaut), `pdf` | format des figures (Venn, scatter, histogramme F1) ; les tableaux de confusion sont toujours en PDF |
 | `--outdir` | chemin | dossier racine des sorties |
 | `--label` | texte | nom du sous-dossier du run |
 

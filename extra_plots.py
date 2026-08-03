@@ -107,6 +107,8 @@ def main():
     p.add_argument("--kmer-normal", default=None,
                    help="fichier kmer normal : retire ces paires de genes de BEAT "
                         "et kmer (meme filtrage que compare_fusions.py)")
+    p.add_argument("--fig-format", choices=["png", "pdf"], default="png",
+                   help="format du scatter et de l'histogramme (defaut png)")
     args = p.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -173,7 +175,7 @@ def main():
     x = np.array([pair_kmer.get(pr, 0) for pr in pairs], dtype=float)
     y = np.array([pair_vizome.get(pr, 0) for pr in pairs], dtype=float)
 
-    scatter_path = os.path.join(args.outdir, "scatter_kmer_vs_vizome.png")
+    scatter_path = os.path.join(args.outdir, f"scatter_kmer_vs_vizome.{args.fig_format}")
     fig, ax = plt.subplots(figsize=(7.5, 6.5))
     ax.scatter(x, y, s=14, alpha=0.5, color="#3b7dd8", edgecolor="none")
     if len(x) >= 2 and np.ptp(x) > 0:
@@ -214,7 +216,7 @@ def main():
         f1_values.append(f1)
     f1_values = np.array(f1_values)
 
-    hist_path = os.path.join(args.outdir, "hist_f1_par_fusion.png")
+    hist_path = os.path.join(args.outdir, f"hist_f1_par_fusion.{args.fig_format}")
     bins = np.linspace(0, 1, 11)  # tranches de 0.1
     counts, edges = np.histogram(f1_values, bins=bins)
     fig, ax = plt.subplots(figsize=(8, 5))

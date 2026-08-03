@@ -43,7 +43,7 @@ def run(cmd):
 
 
 def process(label, beat, kmer, outdir, match, rows_per_page, vizome_count,
-            kmer_normal=None):
+            kmer_normal=None, fig_format="png"):
     base = os.path.join(outdir, label)
     res_dir = os.path.join(base, "resultats")
     fig_dir = os.path.join(base, "figures")
@@ -61,12 +61,13 @@ def process(label, beat, kmer, outdir, match, rows_per_page, vizome_count,
 
     # 2. tableaux + Venn (depuis le dossier resultats)
     run([sys.executable, VISUALIZE, res_dir, "--outdir", fig_dir,
-         "--rows-per-page", str(rows_per_page)])
+         "--rows-per-page", str(rows_per_page), "--fig-format", fig_format])
 
     # 3. graphes supplementaires (depuis les fichiers sources, besoin des index)
     if match in ("row", "index"):
         run([sys.executable, EXTRA, beat, kmer, "--outdir", fig_dir,
-             "--match", match, "--vizome-count", vizome_count] + extra_normal)
+             "--match", match, "--vizome-count", vizome_count,
+             "--fig-format", fig_format] + extra_normal)
     else:
         print("  (extra_plots ignore : --match genepair n'a pas d'index pour "
               "relier les comptages)")
@@ -91,6 +92,8 @@ def main():
     p.add_argument("--kmer-normal", default=None,
                    help="fichier kmer normal : retire ces paires de genes de BEAT "
                         "et kmer (liste noire d'artefacts)")
+    p.add_argument("--fig-format", choices=["png", "pdf"], default="png",
+                   help="format des figures Venn/scatter/histogramme (defaut png)")
     p.add_argument("--outdir", default="analyses", help="repertoire racine de sortie")
     args = p.parse_args()
 
@@ -111,6 +114,7 @@ def main():
                 rows_per_page=int(j.get("rows_per_page") or args.rows_per_page),
                 vizome_count=(j.get("vizome_count") or args.vizome_count).strip(),
                 kmer_normal=kn or None,
+                fig_format=(j.get("fig_format") or args.fig_format).strip(),
             )
     else:
         if not (args.beat and args.kmer):
@@ -118,7 +122,7 @@ def main():
                      "(ou utilisez --manifest).")
         process(args.label, args.beat, args.kmer, args.outdir,
                 args.match, args.rows_per_page, args.vizome_count,
-                kmer_normal=args.kmer_normal)
+                kmer_normal=args.kmer_normal, fig_format=args.fig_format)
 
     print(f"\nTout est ecrit sous : {args.outdir}/")
 
